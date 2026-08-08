@@ -40,7 +40,7 @@ This is not a slow GPU. It's the opposite of a GPU, and MoE decode happens to si
 | Interconnect | RGMII MAC-to-MAC chain via each node's 2+1 integrated switch, no PHYs |
 | Board | 100×100 mm (150×150 under consideration for routing headroom) |
 | Power | ~65 W estimated |
-| Cost | ~$2,775 CAD estimated |
+| Cost | ~\$2,775 CAD estimated |
 
 Every frontier open-weight model's layer fits on one board:
 
@@ -59,7 +59,7 @@ Board count above the minimum buys **speed**, linearly. It does not buy capabili
 - [x] Chip selection (see `docs/chip-selection.md`)
 - [x] Board floorplan and component tally
 - [ ] Octavo pricing and DDR4 capacity options, **blocking**
-- [ ] Verify llama.cpp Vulkan runs on Mali-G52 via STM32MP257F-DK (~$148), **blocking**
+- [ ] Verify llama.cpp Vulkan runs on Mali-G52 via STM32MP257F-DK (~\$148), **blocking**
 - [ ] Schematic
 - [ ] PCB layout
 - [ ] Distributed runtime
@@ -81,6 +81,8 @@ Other relevant prior work: expert offloading in the ML-systems literature (Mixtr
 - `docs/architecture.md`, full architecture, performance math, open unknowns
 - `docs/dials.md`, 15 tunable parameters, what each trades, and which are permanent at fab time
 - `docs/chip-selection.md`, the evaluation trail across ~20 candidate parts
+- `docs/ideal-node.md`, the node specification this architecture is waiting for
+- `docs/compatibility.md`, the cross-generation compatibility contract
 
 ## Honest limitations
 
