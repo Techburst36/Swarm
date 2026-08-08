@@ -1,0 +1,6 @@
+*.kicad_prl
+*-backups/
+fp-info-cache
+*.net
+gerbers/
+.DS_Store
