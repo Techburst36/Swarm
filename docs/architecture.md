@@ -158,22 +158,59 @@ Two very different things can cross a board-to-board connector labeled "Ethernet
 
 **Perpendicular mount, not stacked/parallel.** The blade stands up from the backplane like a card in a slot — this is what makes "one small blade first, swap on failure" physically real, and keeps the backplane footprint compact regardless of blade count.
 
-Two families fit the requirement (power, conditioned Ethernet, and a few low-speed lines — no PCIe or LPDDR crossing the connector, so no controlled-impedance high-speed requirement):
+**Settled on a real PCIe edge connector, repurposed rather than used electrically as PCIe.** Superseded an earlier consideration of a generic right-angle board-to-board connector (Samtec Tiger Eye or similar) once the actual PCIe pinout was checked against a real datasheet rather than assumed.
 
-- **Raw card-edge** (like a RAM slot): cheapest, but exposed gold-finger contacts wear with repeated insertion and have no mechanical retention. Given the disaster-zone/repeated-swap use case under consideration, this is the weaker choice.
-- **Right-angle board-to-board** (pin-and-socket, not exposed edge fingers): real mechanical retention, better insertion-cycle ratings, no oxidation-prone exposed contacts. Samtec's **Tiger Eye** family (1.27mm pitch, right-angle, locking clip option) is a reasonable starting point — the signal count here (power, one Ethernet MDI pair or two, I2C, boot-select) is modest enough that a general-purpose signal connector works; a dedicated high-power family (Samtec PowerStrip or similar) is worth a second look once real per-blade current draw is measured, per unknown 4 below.
+The case for reusing a PCIe slot connector directly:
 
-**Recommendation: right-angle board-to-board over card-edge**, given the swap-and-repair use case this design is explicitly optimizing for.
+- **It's a real, stocked catalog part**, not something to spec from scratch. Amphenol and Sullins both sell standalone PCIe card-edge connectors through Digi-Key and Mouser, in x1/x4/x8/x16 widths, various pin counts (36, 64, 98, 164, 280), through-hole or SMT — the exact part motherboard manufacturers buy in bulk.
+- **It inherits the entire PC industry's mechanical coordinate system, not just the bracket shape.** The PCI Express CEM spec defines bracket position relative to the slot connector, connector position relative to the case rail, and rail position relative to standard case geometry, all as one worked-out system. Mounting a real PCIe connector on the backplane at the spec-correct position means a blade automatically lands correctly relative to a standard PC case's mounting hardware — solving the backplane/standoff alignment question raised earlier by inheriting a solved layout rather than re-deriving one.
+- **Real mechanical retention.** Most PCIe slots include a locking latch that clips over a notch in the card edge — genuine retention, not friction alone.
+- **Direct precedent for exactly this repurposing.** Cryptocurrency-mining PCIe risers already run only power and a couple of signal lines through a PCIe x1 connector, ignoring the rest of the pins. Known, low-risk pattern.
 
-**Still open:** exact pin/signal count and connector part number (pending a real per-blade power/signal budget), whether 4 or 6 ports on the backplane switch is the right target, and blade mechanical dimensions once the LGA land pattern is in hand.
+**Checked against a real pin table (not assumed) whether it actually carries what a blade needs — power, Ethernet, and control:**
+
+| Requirement | PCIe pin(s) | Native or repurposed |
+|---|---|---|
+| Power | Multiple dedicated +12V, +3.3V, GND pins | **Native** — this is what those pins are for |
+| Board-ID / EEPROM | SMCLK / SMDAT | **Native** — PCIe's SMBus sideband is I2C by another name |
+| Boot-select / reset | PERST#, WAKE# | Repurposed spare control pins |
+| Ethernet MDI | 4 of the connector's differential pairs | Repurposed — see below |
+
+**The connector must be x4-class, not x1.** Each PCIe lane provides exactly two dedicated differential pairs (one TX-only, one RX-only). A x1 connector has only 2 pairs total — not enough, since full-speed Gigabit Ethernet (1000BASE-T) needs 4 differential pairs simultaneously to reach the PHY's magnetics. A x4 connector provides 8 pairs: 4 carry the Ethernet MDI signal, 4 sit spare (real headroom, plausibly enough for a later 2.5GbE upgrade without a connector change). This is what fixes the connector size class, not a power or pin-count argument — it's the Ethernet pair budget that forces x4.
+
+Per-blade power draw (10-15 W estimated) sits comfortably inside a stock PCIe slot's native power budget — no supplemental power connector needed.
+
+**Recommendation: x4-class PCIe card-edge connector** (64-pin family), Ethernet PHY and magnetics on the blade side of the connector as established above, backplane side wired to the switch IC.
+
+**Still open:** exact connector part number and insertion-cycle rating (worth a decent-quality part — Amphenol over the cheapest source — given the repeated-swap/disaster-zone use case), whether 4 or 6 ports on the backplane switch is the right target, and blade mechanical dimensions once the LGA land pattern is in hand.
 
 ---
 
-### 4.1 Blade form factor
+### 4.1 Blade form factor and layout
 
 **Blade sized to the module footprint plus routing margin, 8 to 10 layers.** Backplane at 150x150mm-class, **4 layers**, hosting 4 to 6 blade connectors plus the switch IC and power input.
 
 Each module is 2,250 mm2. A blade sized around it, rather than four to six modules sharing one large board, is what makes the high layer count affordable — the expensive layers are only ever as large as they need to be.
+
+**Mechanical basis: standard full-height PCIe bracket geometry**, per the PCI-SIG spec — 120.02 mm bracket height, ~18.4 mm width, 20.32 mm case slot pitch. Real, stocked hardware, not a custom design: any ATX/mATX case already has the rail, the screw, and the slot opening. Early bring-up (`test-plan.md` steps 5-6, one blade first) can happen in an off-the-shelf open-frame test bench case with zero custom mechanical work. A custom enclosure only becomes necessary once past single-blade validation — and it's a cheaper quote from a fab shop because the blade's retention geometry already matches something they tool for routinely.
+
+**M.2 drives mounted rotated 90 degrees from the usual orientation** — length running along the blade's height instead of its length. This is not novel: ASUS's Hyper M.2 x16 cards already ship four M.2 drives arranged exactly this way, in a row under one shared heatsink and blower fan, as a real product. The geometry:
+
+| | Dimension | Fit |
+|---|---|---|
+| M.2 2280 | 22 mm wide x 80 mm long | length runs along blade height |
+| Available card height (full-height bracket) | ~100-110 mm usable | 80 mm module fits with ~20-30 mm to spare for standoff and PCB margin |
+| Per-drive footprint along blade length | ~26 mm (22 mm width + connector/routing clearance) | |
+| 3 drives (RK3588's native count) | ~78 mm of blade length | |
+| Standard GPU card length, for comparison | 240-300+ mm | ~150-200 mm of length left over for the module, power regulation, and connector |
+
+**Consequence: the blade does not need to be GPU-length.** The M.2 row leaves most of a standard card's length unused — the blade can be considerably shorter, which is cheaper to fab and lighter to swap. Exact length is a layout-stage decision once the module footprint and connector are placed.
+
+**Blade thickness is not set by the M.2 mounting.** A standard M.2 socket holds the module roughly parallel to the PCB — connector clearance plus module plus PCB is on the order of 6-10 mm, comfortably under a single 20.32 mm slot pitch. Worth re-checking against real component datasheets, but the earlier assumption of needing two slot-widths per blade may not hold.
+
+**All three drives are mechanically identical** in this layout — the M.2 connector doesn't change shape based on lane count (x1 vs x4 is wired behind the same physical socket), so the row is uniform regardless of which drive gets the x4 link.
+
+**Still open:** whether the backplane standoff positions can be made to land on standard ATX standoff locations. The ATX standoff grid is a published, fixed pattern; the backplane's own component placement is not derived from it. Most cases carry more pre-threaded standoff posts than a motherboard actually uses, so hitting a usable subset directly is plausible, but this is a layout-stage question, not yet resolved — either some backplane mounting holes land on standard positions and the rest use repositioned or added standoffs, or the test-bench case needs a few minutes of setup instead of none. Not a blocker either way.
 
 ### 4.2 Population, per blade
 
@@ -239,7 +276,8 @@ Per-board DC input, never chained between boards. Metal standoffs tie board grou
 ### 4.6 Design-for-bring-up
 
 - **Backplane switch IC candidate: Realtek RTL8367S/RTL8367RB** (5-port Gigabit, integrated PHYs, RGMII CPU port) or equivalent — enough ports for 4 blades plus uplink; 6 blades needs a second switch or a larger part
-- **Blade connector candidate: Samtec Tiger Eye**, 1.27mm right-angle, or an equivalent right-angle board-to-board family — power, conditioned Ethernet, I2C, boot-select only, no controlled-impedance requirement
+- **Blade connector: x4-class PCIe card-edge connector** (64-pin family, Amphenol or similar quality), power/SMBus/control on native pins, 4 of 8 differential pairs carrying the Ethernet MDI signal — see section 4.0
+- **PCIe bracket geometry on the blade**, full-height (120.02 mm), so early bring-up can use a stock ATX/mATX test bench case with no custom mechanical work
 - **All three PCIe 2.0 lanes routed on the blade** even if not populated. Free now, impossible later
 - **Per-blade current sense on I2C**, because power draw is currently an estimate
 - **Test points on every rail, on both the blade and the backplane**
