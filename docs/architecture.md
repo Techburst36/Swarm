@@ -45,47 +45,38 @@ The niche is narrow and real: **models whose weights are enormous but whose acti
 
 ---
 
-## 2. The node: Octavo OSD32MP2
+## 2. The node: RK3588 LGA module
 
-Selected after evaluating and rejecting roughly nineteen alternatives; see [chip-selection.md](chip-selection.md) for the trail and the reasoning behind each rejection.
+**Superseded the Octavo OSD32MP2** (32-bit LPDDR4 SiP, six storage interfaces per node) after per-interface throughput caps and the actual GPU vendor were checked against primary sources rather than assumed. Full trail, and why the OSD32MP2 was the target until it wasn't, in [chip-selection.md](chip-selection.md).
 
-A System-in-Package integrating STMicroelectronics' STM32MP257, DDR4, an STPMIC2 power management IC, EEPROM, oscillators and passives into a single 21×21 mm BGA.
+**Banana Pi BPI-LM7** or **ArmSoM LM7** — two vendors shipping the same 506-pin LGA pinout, solder-down, no board-to-board connector.
 
 | Spec | Value |
 |---|---|
-| Package | 21×21 mm, 437 ball, **1.0 mm pitch** |
-| CPU | 2× Cortex-A35 @ 1.5 GHz with NEON, 512 KB L2 |
-| Coprocessor | Cortex-M33 @ 400 MHz |
-| NPU | 1.35 TOPS |
-| GPU | **Vulkan 1.1, OpenCL 1.2, OpenGL ES 3.1** |
-| Memory | DDR4, integrated (**capacity unconfirmed; see §9**) |
-| Storage | **3× SDMMC** (SD/eMMC/SDIO, 8-bit), 2× Octal SPI, 8× SPI |
-| Networking | **3× Gigabit Ethernet with 2+1 integrated switch**, TSN, IEEE 1588v2 |
-| PCIe | 1× Gen2, embedded 5 Gbit/s PHY |
-| USB | 1× 2.0 HS host, 1× 2.0/3.0 DRD (5 Gbit/s PHY **shared with PCIe**) |
-| Video | 1080p60 H.264 encode/decode |
-| Temperature | −40 to +85 °C case |
+| Package | 45×50 mm, **LGA 506-pin, solder-down** |
+| CPU | 4× Cortex-A76 @ 2.4 GHz + 4× Cortex-A55, **SDOT-capable** |
+| NPU | 6 TOPS |
+| GPU | Mali-G610 MP4, **OpenCL 2.2, Vulkan 1.1, mature Panfrost/Panthor open driver** |
+| Memory | **8 GB 64-bit LPDDR4x, ~34 GB/s** (32 GB option available) |
+| Storage/link | **PCIe 3.0 x4** plus 2× PCIe 2.0 x1 |
+| Networking | GMAC Ethernet |
+| Temperature | commercial range, unconfirmed for this module — see §9 |
 
-**Why this rather than the bare STM32MP257 at a third the price:** the 1.0 mm pitch makes a 4-layer board routable and hand-assemblable, the integrated DDR4 removes nine fly-by memory routes, and the integrated PMIC removes a 24-rail power distribution problem. Those three risks dominate a first BGA project. The bare chip is a version-two option and the software carries over unchanged.
+**Why this rather than the OSD32MP2:** 64-bit LPDDR4x roughly doubles node memory bandwidth, the A76 cores carry `SDOT` where the OSD32MP2's A35 cores did not, and a real PCIe 3.0 x4 link (confirmed on the published LGA pin function list — PCIE30_PORT0 carries lanes 0–1, PCIE30_PORT1 carries lanes 2–3, all bifurcation pins broken out) replaces six slower, harder-to-route storage interfaces with one fast one.
 
-**Why the GPU matters more than the NPU:** Vulkan 1.1 means llama.cpp's Vulkan backend has a real chance of running. That reduces the software task from *write a distributed MoE runtime from scratch against an undocumented accelerator* to *port an existing engine and add multi-node RPC*. This was the single largest risk reduction in the entire chip evaluation.
+**Why the GPU matters less than it used to:** the OSD32MP2's Vulkan 1.1 was the deciding factor against a GC8000/Etnaviv part with no working Vulkan path. The RK3588's Mali-G610 also runs Vulkan 1.1 on a mature open driver, so this axis is now a wash rather than a differentiator — the real gap moved to memory bandwidth and PCIe lane count.
+
+**Confirmed the hard way, twice.** CM4-form-factor RK3588 modules (Radxa CM5, and similar) only expose PCIe x1 through their connector — ~400 MB/s, which would gut the entire advantage. A module must break out the full x4 on its own pins. The BPI-LM7/LM7 pinout does; the CM4-compatible modules do not.
 
 ---
 
 ## 3. Interconnect
 
-Each node has three Gigabit Ethernet interfaces with an integrated 2+1 switch. Nodes chain **MAC-to-MAC over RGMII**, direct copper between adjacent nodes, no PHY chips, no magnetics, no external switch IC.
+**Superseded the RGMII MAC-to-MAC chain** that the OSD32MP2's integrated 2+1 switch made possible. The RK3588 has one GMAC Ethernet interface per node, not three, so board-to-board and node-to-node traffic both run over ordinary switched Ethernet rather than a bespoke chain.
 
-| Property | Value |
-|---|---|
-| Per-link throughput | ~125 MB/s |
-| Latency | microseconds |
-| Topology | linear chain via integrated switches; third port free for uplink |
-| Signalling | RGMII, 12 signals per direction at 125 MHz |
+**Consequence, unchanged from the prior design:** a switched fabric gives any-to-any connectivity, so tensor-parallel groups are not constrained by physical adjacency and a single dead node does not partition the network. This is also what `docs/compatibility.md`'s Ethernet-only inter-board contract already assumed, so no cross-generation compatibility work is lost in the pivot.
 
-One PHY plus magnetics per board handles the outside world. Board-to-board runs as more RGMII over the stacking header, or over ordinary Ethernet cabling if the stack is spread out for thermal reasons.
-
-**Consequence:** a switched fabric gives any-to-any connectivity, so tensor-parallel groups are not constrained by physical adjacency and a single dead node does not partition the network.
+**Open:** real achievable throughput and latency per node over GMAC has not been measured; treat it as an unknown rather than assume it matches the old RGMII figures (~125 MB/s, microsecond latency).
 
 ---
 
@@ -93,58 +84,33 @@ One PHY plus magnetics per board handles the outside world. Board-to-board runs 
 
 ### 4.1 Form factor
 
-100×100 mm, 4 layers, double-sided assembly. 150×150 mm is under consideration, the PCB is roughly 0.2% of BOM cost, so the larger size buys routing headroom and easier bring-up for about $25.
+150×150 mm, 4–6 nodes per carrier. Four is the baseline figure used throughout this document; six is possible on the same board size if layout allows.
 
 ### 4.2 Population
 
-Nine nodes in a 3×3 grid. Storage on the reverse face.
+Per node, one M.2 2280 NVMe on the PCIe 3.0 x4 link plus two M.2 2242 drives on the two PCIe 2.0 x1 links.
 
 | Interface | Attached per node | Bandwidth | Capacity |
 |---|---|---|---|
-| SDMMC ×3 | 3× eMMC 32 GB | 840 MB/s | 96 GB |
-| PCIe Gen2 ×1 | 1× BGA NVMe | ~500 MB/s | 256 GB–1 TB |
-| Octal SPI ×2 | 2× Octal NAND 4 Gb | ~400 MB/s | 1 GB |
-| **Per node** | **6 devices** | **~1.74 GB/s** | **~350 GB–1.1 TB** |
+| PCIe 3.0 x4 | 1× M.2 2280 NVMe | ~3.2 GB/s | up to 4+ TB |
+| PCIe 2.0 x1 ×2 | 2× M.2 2242 NVMe | ~400 MB/s each | up to 1 TB each |
+| **Per node** | **3 devices** | **~4.0 GB/s** | **multi-TB** |
 
-Per board: **54 storage devices, ~15.7 GB/s aggregate, ~3.2 TB.**
+Per board at 4 nodes: **~16 GB/s aggregate** (up to ~18.8 GB/s if all PCIe 2.0 x1 links are populated), **multi-TB total.**
 
-The USB 3.0 port is unavailable in this configuration, its 5 Gbit/s PHY is shared with PCIe, and NVMe is the better use. USB 2.0 HS remains for console and debug.
+### 4.3 Power distribution
 
-### 4.3 eMMC density is a bandwidth decision, not a capacity one
+**Not yet re-derived for this node.** The OSD32MP2 design's 12 V-distributed, 5 V-on-board scheme and its reasoning (avoid daisy-chaining current through a stack, keep per-board hot-swap and fault isolation) likely still apply, but RK3588 per-node draw is estimated at 10–15 W under load versus the OSD32MP2's ~65 W/board figure — real numbers pending §9's power-under-load unknown.
 
-Sequential read by density, eMMC 5.1, 8-bit bus, HS400 mode:
+### 4.4 Design-for-bring-up
 
-| Density | Sequential read |
-|---|---|
-| ≤16 GB | 160 MB/s |
-| ≥32 GB | 280 MB/s |
-
-Below 32 GB there are not enough NAND dies to interleave and the interface idles. **HS400 support does not deliver HS400 speed on small parts.** 32 GB modules are therefore mandatory, and the resulting capacity over-provisioning (about 2 TB against a 419 GB model) is not waste, it funds parked-session KV, a local corpus, a LoRA library, and a resident draft model.
-
-### 4.4 Power distribution
-
-Per-board DC input, **12 V distributed, regulated to 5 V on board.** At 12 V a board's ~65 W is 5.4 A rather than 13 A, which halves conductor cross-section and IR drop.
-
-Daisy-chaining power through a stack does not work: twelve boards at 5 V would put 156 A through the bottom board's connector, and that board would dissipate everyone else's conduction loss. Per-board input also gives hot-swap, independent fault isolation, and per-board current measurement.
-
-Metal standoffs through the mounting holes tie board grounds together, which RGMII signal integrity wants anyway.
-
-### 4.5 Design-for-bring-up
-
-Roughly $45 of parts that either save debugging time or unlock later capability:
-
-- **8 M3 mounting holes**, corners plus side midpoints, for stacking geometry and a ground path
-- **PCIe routed to the header** even if unpopulated, free now, impossible later
-- **INA219 per node on I2C**, power consumption is currently unmeasured, and this is how that stops being true
-- **Test points on every rail and RGMII pair**
-- **Boot-select jumper per node**, recover a node without reflowing it
-- **Status LED per node**
-- **Board ID EEPROM**, stack addressing without DIP switches
-- **Fan header and standoff airgap**, 65 W in a stack needs real airflow, not flush stacking
+Carries over in spirit from the OSD32MP2 design; specifics (mounting hole count, connector choices) need to be re-derived against the LGA land pattern and 150×150 mm layout once that's in hand. Still wanted regardless of node: current-sense per node, test points, boot-select jumper, status LED, board ID EEPROM, and real airflow provisioning.
 
 ---
 
 ## 5. Dense models
+
+**Not yet re-derived for the RK3588 pivot.** The tables below assume the OSD32MP2's 2 GB/node and 9-node board; the RK3588 board carries 8 GB/node (32 GB option) across 4 nodes, which changes every node-count and board-count figure in this section. The structural argument (TP is a speed choice, not a capacity requirement) still holds — the specific numbers need recomputing before they're trusted.
 
 With 2 GB per node, a transformer layer of essentially any dense model fits on a single node. Tensor parallelism therefore becomes a **speed choice rather than a capacity requirement**, the opposite of the situation on smaller-memory parts.
 
@@ -177,6 +143,8 @@ MoE: nodes hold *the same layer*, split by expert, in lockstep. A gang. Weights 
 Consequence: dense wants maximum nodes; MoE wants maximum storage bandwidth. In MoE mode this is fundamentally a storage device, not a compute device.
 
 ### 6.2 Sizing
+
+**Board capacity figures below still assume the OSD32MP2's 18 GB/board.** The RK3588 board carries 32 GB across 4 nodes — every layer size below still fits comfortably, so the qualitative conclusion is unchanged, but the "board count above one buys speed, not capability" framing should be re-checked against the new per-board GB once the numbers are redone.
 
 | Model | Total | Layers | Experts per layer | Layer @Q4 | Total storage |
 |---|---|---|---|---|---|
@@ -267,23 +235,21 @@ FP8 KV cache roughly doubles these. Kimi K3 is tighter: a 14.83 GB layer leaves 
 
 **Sparse attention reduces attention compute, not KV storage.** Keys must still be stored, because any of them may later be selected.
 
-### 7.1 Speculative decoding
+### 7.1 Speculative decoding — measured, and it does not pay here
 
-The only mechanism that improves *single-user* latency rather than serving more users. A small resident draft model proposes several tokens; the large model verifies them in one batched pass, with batch staying 1 from the user's perspective.
+**This section previously stated an expected 1.5–2× gain, borrowed from dense-model figures. That expectation has since been tested against this architecture's actual mechanism and did not hold. Full method, table, and caveats live in `docs/dials.md` dial 13; this is the short version.**
 
-GLM-5.2 ships an MTP layer for EAGLE-style speculation, sharing the indexer and KV cache. Expect 1.5–2×.
+The mechanism that makes speculative decoding close to free on a dense model — verifying B draft tokens costs the same weight reads as verifying 1 — does not transfer to a *streaming* MoE. Verifying B draft tokens here requires loading the union of whatever experts those tokens route to, and that union grows with B.
+
+Measured on OLMoE-1B-7B (16 layers, 64 experts, top-8) by hooking the router and comparing the real expert union against a break-even threshold derived from this document's own bandwidth math: **net loss at every tested batch size (B=2, 4, 8), across twelve independent seeds.** An initial 4-seed pass showed one outlier (seed 123, B=4 multiplier 2.20× against a 1.82× break-even) close enough to the line to be worth checking properly; an 8-seed follow-up sweep landed at 2.33–2.59× on B=4, never approaching seed 123's low mark — confirming it was the natural tail of a real distribution, not the start of a different regime. Full 12-seed range: 1.54–1.86× at B=2, 2.20–2.59× at B=4, 3.06–3.91× at B=8, against break-even of 1.25×/1.82×/2.35× respectively. Routing correlation is real — every layer sits below the independent-sampling prediction — but not strong enough to clear break-even under the acceptance-rate assumptions borrowed from dense-model EAGLE/MTP literature (no draft model was built to measure this MoE's real acceptance rate). **This question is closed** under those assumptions; only a real draft model's measured acceptance rate could reopen it.
+
+**Conclusion: do not budget engineering effort on speculative decoding for the first working runtime.** GLM-5.2's MTP layer costs nothing to leave available for later, but it is not the free win it was assumed to be here, and it should not gate or shape the initial software plan.
 
 ---
 
 ## 8. What else the silicon does
 
-Each node carries hardware the LLM path never touches. Nine of each per board:
-
-- **H.264/H.265 encoders and decoders** at 1080p60, a serious transcoder or NVR
-- **Mali GPU with OpenCL**, general compute beyond the NPU
-- **Cortex-M33 at 400 MHz**, idle during inference. Useful for housekeeping, prefetch scheduling, thermal management, watchdog duty, and hard-real-time supervision that a busy Linux scheduler cannot starve
-- **3× CAN FD**, a multi-drop differential bus usable as an out-of-band control plane independent of RGMII, for health checks and resets when the data network is saturated or a node has hung
-- Camera interfaces, ADCs, crypto acceleration, 27 Ethernet ports, 36 CPU cores
+**Not yet re-derived for the RK3588 pivot.** The bullets below describe the OSD32MP2's idle-hardware inventory (Cortex-M33 housekeeping core, CAN FD out-of-band control plane) which does not carry over — the RK3588 has no M33 coprocessor and no CAN FD. What it does carry: a full 8K video codec block, the Mali-G610 for general OpenCL compute beyond the NPU, and per-node crypto acceleration. An updated inventory belongs here once the carrier board design is further along.
 
 ### 8.1 Image generation, honest assessment
 
@@ -309,33 +275,33 @@ SVD-class UNet models (~1.5B, temporal convolution plus frame-axis attention) in
 
 ## 9. Open unknowns
 
-Ordered by how much they gate everything else.
+Ordered by how much they gate everything else. Rewritten for the RK3588 pivot — the OSD32MP2-era list (DDR4 capacity, Mali-G52 Vulkan, Octal SPI type, SDMMC DMA contention) is retired along with that node.
 
-1. **OSD32MP2 DDR4 capacity and unit price.** Every figure here assumes 2 GB per node at roughly $150. **Blocking.**
-2. **Does llama.cpp's Vulkan backend run on Mali-G52?** Decides whether the software task is a port or a rewrite. Resolvable for about $148 with an STM32MP257F-DK. **Blocking.**
-3. **Are the 2× Octal SPI real xSPI flash controllers**, or the 50 Mbit peripheral kind? Decides whether 18 NAND parts belong on the board.
-4. **Do the 3 SDMMC controllers do independent concurrent DMA**, or share an arbiter? If they share, per-node storage bandwidth is 280 MB/s rather than 840.
-5. **Real eMMC read profile at ~16 MB granularity.** The 280 MB/s figure is sequential; expert reads sit between sequential and random.
-6. **Power consumption.** Estimated from product category. Unmeasured.
-7. **Real matmul throughput on transformer shapes.** The 1.35 TOPS figure is a vendor number, not a transformer benchmark.
-8. **RGMII chain stability** across nine nodes under sustained load.
-9. **GLM-5.2 per-expert dimensions**, currently derived rather than read from config.json.
+1. **Whether speculative decoding pays here.** Resolved — see §7.1 and `dials.md` dial 13. **No longer blocking.**
+2. **Real NVMe throughput on RK3588 silicon**, PCIe 3.0 x4 and the two x1 links, under real transformer-shaped access patterns rather than sequential benchmarks. Resolvable for ~$120 on an RK3588 SBC. **Blocking.**
+3. **Module dimensions confirmed at 45×50 mm**, but the carrier layout still needs the LGA mechanical drawing and land pattern before routing can start.
+4. **Real power under sustained load.** The ~10–15 W/node estimate is from product category, not measurement. **Blocking.**
+5. **Load imbalance factor** across nodes in gang (MoE) mode. Estimated at 1.5–2×, consistent with §6.3, but not measured on real hardware.
+6. **Thermal behaviour** of four A76 clusters on one 150×150 mm board under continuous matmul.
+7. **Power rail regulation** to within ±5% across a 4–6-node board under transient load.
+8. **Real GMAC Ethernet throughput and latency per node**, since the RGMII chain figures no longer apply (see §3).
+9. **GLM-5.2 per-expert dimensions**, still derived rather than read from config.json — carried over unresolved from the OSD32MP2-era list.
 
 ---
 
 ## 10. Build path
 
-**Step 1, about $148.** One STM32MP257F-DK. Resolve unknowns 2, 6, and 7 on target silicon. If Vulkan does not work, this saves the rest of the budget and a year of effort.
+**Step 1, ~$120.** One RK3588 single-board computer — Orange Pi 5, Rock 5C, NanoPi, or similar. All run $100–150 with published llama.cpp benchmarks already available. Measure real NVMe throughput, NEON quantized GEMM, power, and thermals on the target silicon. Resolves unknowns 2, 4, and 6.
 
-**Step 2, about $150 more.** A second dev board. Two nodes over Ethernet is where the entire distributed runtime gets written and debugged (expert sharding, RGMII transport, streaming scheduler, failover) before spending anything on a PCB. **This is where the year of work lives, and it is hardware-agnostic.**
+**Step 2, $0.** Run the speculative-decoding experiment against a routing trace. **Done** — see §7.1. Resolved unknown 1 before this rewrite.
 
-**Step 3, free.** Schematic and layout in KiCad, with §4.5 designed in from the start.
+**Step 3, ~$120 more.** A second SBC. Two nodes over Ethernet is where the distributed runtime gets written and debugged: expert sharding, transport, streaming scheduler, weighted distribution, failover. **This is the year of work, and it is hardware-agnostic** — see `software-architecture.md` layers 3–4 and `test-plan.md` for the localhost-simulated-nodes harness.
 
-**Step 4, about $300.** Fab five boards, assemble one partially (3 nodes, 9 eMMC). Validate BGA fanout, RGMII chain, storage array, thermals, power distribution, toolchain.
+**Step 4, free.** Carrier schematic and layout in KiCad, adapting the vendor's published reference design.
 
-**Step 5, about $2,775.** Fully populate one board. This is a complete device on its own: a frontier MoE model plus a local corpus with retrieval, at roughly 65 W, with no network dependency.
+**Step 5, ~$400.** Fab five carriers, populate one with a single module and one drive. Validate LGA reflow, power rail regulation, PCIe routing, Ethernet, thermals.
 
-**Step 6, incremental.** Everything past step 4 is repetition of a validated design.
+**Step 6, ~$2,400.** Populate four nodes. This is a complete device: a frontier MoE model plus a local corpus with retrieval, in a box, with no network dependency.
 
 ---
 
@@ -351,6 +317,10 @@ Also relevant: expert offloading in the ML-systems literature (Mixtral-offloadin
 
 ## 12. A note on the numbers
 
-Nearly every figure in this project that mattered was wrong at least once before being corrected against a primary source. An entire interconnect design was invalidated when a datasheet revealed the intended fabric was a master-only flash controller. A per-token figure was wrong by 65×. A storage requirement was wrong by 93×. An image-generation estimate was optimistic by three orders of magnitude.
+Nearly every figure in this project that mattered was wrong at least once before being corrected against a primary source. An entire interconnect design was invalidated when a datasheet revealed the intended fabric was a master-only flash controller. A per-token figure was wrong by 65×. A storage requirement was wrong by 93×. An image-generation estimate was optimistic by three orders of magnitude. A GPU was assumed to be Arm Mali for two days and turned out to be VeriSilicon. Speculative decoding was credited with a 1.5–2× gain that measurement showed to be a net loss on this architecture.
+
+The node itself changed late, from a 32-bit LPDDR4 SiP with six storage interfaces per node to a 64-bit LPDDR4x module with one PCIe 3.0 x4 link, after per-interface throughput caps made the first design's aggregate unreachable. That pivot then itself got lost in a git merge conflict and had to be reconstructed from conversation history rather than the repository — worth noting as its own instance of the pattern this section describes.
+
+Read everything here as *best current estimate, several times revised.* Several tables in sections 5, 6.2, and 8 above are flagged as not yet re-derived for the RK3588 node and should be treated as provisional until they are. Something else will invalidate something else.
 
 Read everything here as *best current estimate, several times revised.* Something else will invalidate something else.

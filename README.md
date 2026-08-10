@@ -32,15 +32,18 @@ This is not a slow GPU. It's the opposite of a GPU, and MoE decode happens to si
 
 | | |
 |---|---|
-| Nodes | 9 × Octavo OSD32MP2 (STM32MP257 + DDR4 + PMIC in a 21×21 mm SiP) |
-| Package pitch | 1.0 mm, 437 ball, 4-layer routable, hand-solderable |
-| RAM | 18 GB (assuming 2 GB/node, **unconfirmed**) |
-| Storage | 27 × eMMC 32 GB + 9 × BGA NVMe + 18 × Octal NAND |
-| Aggregate bandwidth | ~15.7 GB/s |
-| Interconnect | RGMII MAC-to-MAC chain via each node's 2+1 integrated switch, no PHYs |
-| Board | 100×100 mm (150×150 under consideration for routing headroom) |
-| Power | ~65 W estimated |
-| Cost | ~\$2,775 CAD estimated |
+| Nodes | 4× RK3588 LGA module (Banana Pi BPI-LM7 / ArmSoM LM7) |
+| Package | 45×50 mm, LGA 506-pin, solder-down |
+| CPU | 4× Cortex-A76 @ 2.4 GHz + 4× A55, Armv8.2 with SDOT, Mali-G610 MP4 |
+| RAM | 8 GB 64-bit LPDDR4x per node, ~34 GB/s (32 GB option available) |
+| Storage | 1× NVMe on PCIe 3.0 x4 + 2× on PCIe 2.0 x1 per node |
+| Aggregate bandwidth | ~16 GB/s at 4 nodes (~18.8 GB/s if the 2.0 x1 links are populated) |
+| Interconnect | GMAC Ethernet |
+| Board | 150×150 mm |
+| Power | ~80–90 W estimated (10–15 W/node) |
+| Cost | ~\$2,400–2,470 CAD estimated |
+
+Superseded the earlier 9× Octavo OSD32MP2 design (~\$2,775, 18 GB RAM, ~11.2 GB/s) once per-interface throughput caps and the GPU vendor were checked against primary sources rather than assumed — see `docs/chip-selection.md` for the full trail, including why the OSD32MP2 remains a reasonable runner-up.
 
 Every frontier open-weight model's layer fits on one board:
 
@@ -51,18 +54,19 @@ Every frontier open-weight model's layer fits on one board:
 | DeepSeek V4-Pro | 1.6T | ~9 GB | 1 |
 | Kimi K3 | 2.78T | 14.83 GB | 1 |
 
-Board count above the minimum buys **speed**, linearly. It does not buy capability.
+Node count above the minimum buys **speed**, linearly. It does not buy capability.
 
 ## Status
 
 - [x] Architecture designed and documented
-- [x] Chip selection (see `docs/chip-selection.md`)
+- [x] Chip selection (see `docs/chip-selection.md`) — RK3588 LGA module
 - [x] Board floorplan and component tally
-- [ ] Octavo pricing and DDR4 capacity options, **blocking**
-- [ ] Verify llama.cpp Vulkan runs on Mali-G52 via STM32MP257F-DK (~\$148), **blocking**
+- [x] Speculative decoding measured on OLMoE-1B-7B: **net loss at every tested batch size across 12 seeds, disabled, question closed** (see `docs/architecture.md` §7.1 and `docs/dials.md` dial 13)
+- [ ] Confirm PCIe 3.0 x4 and real NVMe throughput on RK3588 SBC (~\$120), **blocking**
+- [ ] Power draw under sustained load, **blocking**
 - [ ] Schematic
 - [ ] PCB layout
-- [ ] Distributed runtime
+- [ ] Distributed runtime (layers 3–4, simulated multi-node harness, no hardware needed — see `docs/test-plan.md`)
 
 **The two blocking items are the whole project right now.** Nothing downstream is worth doing before they're answered.
 

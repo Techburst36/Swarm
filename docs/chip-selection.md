@@ -180,7 +180,7 @@ The trade is ~30% more nodes per board for roughly 10× the build difficulty. An
 
 ---
 
-## Selected: Octavo OSD32MP2
+## Runner-up: Octavo OSD32MP2
 
 21×21 mm, 437 ball, **1.0 mm pitch.** STM32MP257 + DDR4 + STPMIC2 + EEPROM + oscillators + passives in one package.
 
@@ -203,7 +203,55 @@ The trade is ~30% more nodes per board for roughly 10× the build difficulty. An
 
 **What it costs:** roughly 4–5× the bare chip per node, and 21×21 mm limits you to 9 per 100×100 mm board.
 
-**Still open:** unit price and DDR4 capacity options. Everything in this repository assumes ~$150 and 2 GB/node. Also unverified: whether the 2× Octal SPI are real xSPI flash controllers or the 50 Mbit peripheral kind, which decides whether 18 NAND parts belong on the board.
+**Still open (at the time this was the pick):** unit price and DDR4 capacity options. Also unverified: whether the 2× Octal SPI are real xSPI flash controllers or the 50 Mbit peripheral kind, which decides whether 18 NAND parts belong on the board.
+
+### Why it was superseded
+
+The OSD32MP2 was the target until per-interface throughput figures were checked against controller limits rather than device datasheets. Four findings, in the order they landed:
+
+1. **The GPU is VeriSilicon Vivante GC8000, not Arm Mali.** The open driver is Etnaviv, whose Vulkan support does not cover this generation, and community reports indicate ggml-vulkan fails at instance creation on the proprietary stack.
+2. **Memory is 32-bit LPDDR4 at ~9.6 GB/s, shared.** Streamed weights cross it twice, capping effective streaming at roughly 3.0 GB/s per node.
+3. **The Cortex-A35 is Armv8.0-A and lacks `SDOT`**, giving roughly 3.5–5 GFLOPS on quantized GEMM where ~4.4 was needed. Compute sat uncomfortably close to storage.
+4. **Per-interface caps make the aggregate unreachable.** eMMC via the SDMMC controller near 200 MB/s, PCIe Gen2 x1 at ~410 MB/s, Octal SPI near 115 MB/s. Six devices per node reach ~1.24 GB/s, not the 1.74 assumed.
+
+Nine nodes with 54 storage devices therefore gave ~11.2 GB/s, at ~$2,775 and 63 BGA placements.
+
+**It remains a reasonable part** and the SiP integration argument still holds. It is simply beaten by a module that costs similar money and carries 64-bit memory, an SDOT-capable CPU, and a PCIe 3.0 x4 link.
+
+---
+
+## Selected: RK3588 LGA module
+
+**Banana Pi BPI-LM7** or **ArmSoM LM7** — two vendors shipping the same 506-pin LGA pinout. ~$268 USD (~$368 CAD) at 8 GB RAM plus 32 GB eMMC; a 32 GB RAM option also exists.
+
+| Criterion | Result |
+|---|---|
+| 1. SIMD/NPU | 4× Cortex-A76 **with SDOT**, 6 TOPS NPU, Mali-G610 MP4 |
+| 2. Memory capacity | **8 GB default, up to 32 GB** |
+| 3. Memory bandwidth | **64-bit LPDDR4x, ~34 GB/s** |
+| 4. Storage and link | **PCIe 3.0 x4 plus 2× PCIe 2.0 x1**, GMAC Ethernet |
+| 5. Package | **LGA 506-pin, solder-down**, 45×50 mm |
+| 6. Compute API | OpenCL 2.2, Vulkan 1.1, **mature Panfrost/Panthor open driver** |
+
+**The confirmation that decided it.** The published pin function list shows PCIE30_PORT0 carrying lanes 0 and 1 and PCIE30_PORT1 carrying lanes 2 and 3, which combine to the full x4. All bifurcation control pins are broken out. This matters because CM4-form-factor RK3588 modules such as the Radxa CM5 expose only PCIe x1 through the connector, capping a node near 400 MB/s.
+
+**Why a module here and not for MYIR.** The rule established above is that a SOM is a category error when its price buys packaging rather than capability. MYIR's RK3568 module at $250 carried 2 GB and one eMMC channel. This one carries 8–32 GB of 64-bit LPDDR4x, a PCIe 3.0 x4 link, and SDOT cores, at similar money. The rule holds; this passes it.
+
+**Against the OSD32MP2 board (both priced with post-shortage NVMe figures):**
+
+| | OSD32MP2 ×9 | RK3588 ×4 |
+|---|---|---|
+| Cost | ~$2,775 | **~$2,470** |
+| Memory | 18 GB | **32 GB** |
+| Storage bandwidth | ~11.2 GB/s | **~16 GB/s** |
+| Storage capacity | 864 GB | **6 TB** |
+| Parts to place | 63 BGA | **4 LGA + 12 sockets** |
+| Compute headroom | ~1× | **~4×** |
+| Software path | unproven (Etnaviv, no Vulkan) | **llama.cpp runs on RK3588 today** |
+
+**Also rejected in this round:** Radxa CM5, disqualified by its CM4-compatible pinout exposing only PCIe x1. FriendlyElec CM3588, which breaks out four PCIe Gen3 lanes but uses a board-to-board connector rather than solder-down. Firefly Core-3588L, functionally similar to the LM7 at $397 CAD for 4 GB against $368 for 8 GB — dominated on price and memory.
+
+**Still open:** the LGA land pattern and mechanical drawing for layout, real NVMe throughput on RK3588 silicon, sustained power draw, and 4.0 V regulation to ±5% under transient load. The dev-board question got easier alongside this pivot too — RK3588 SBCs (Orange Pi 5, Rock 5C, NanoPi) run $100–150 with published llama.cpp benchmarks, a materially better first purchase than a bare-silicon dev kit at similar cost.
 
 ---
 

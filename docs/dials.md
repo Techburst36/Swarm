@@ -22,7 +22,7 @@ Reference document, read the entry you need, not the whole thing. Companion to [
 | 10 | Node population per board | money ↔ capability | assembly |
 | 11 | **Board dimensions** | money ↔ routability | **fab** |
 | 12 | eMMC grade | money ↔ reliability | assembly |
-| 13 | Speculative decoding | free latency win | software |
+| 13 | Speculative decoding | measured net loss, disabled | software |
 | 14 | Expert caching and prefetch | complexity ↔ latency | software |
 | 15 | Model choice | everything | software |
 | 16 | **Board specialization** | workload envelope | **fab** |
@@ -286,17 +286,29 @@ Endurance note: MLC eMMC is roughly 3,000 P/E cycles. This workload is read-domi
 
 ---
 
-## 13. Speculative decoding, the only free latency win
+## 13. Speculative decoding, and why it may not apply
 
-Every other dial trades something. This one does not.
+**This entry was previously titled "the only free latency win." That was wrong on this architecture, and the correction matters. It is now titled by the actual measured result.**
 
-A small resident draft model proposes several tokens; the large model verifies them in one batched pass. Batch stays 1 from the user's perspective.
+For a **dense** model, speculative decoding is close to free. A small draft model proposes several tokens and the large model verifies them in one pass, and because verification reads the same weights regardless of how many tokens are checked, any acceptance above 1 is a direct multiplier. Reported gains of 1.5–2× come from this regime.
 
-**GLM-5.2 ships this in the weights**, an MTP layer for EAGLE-style speculation, sharing the indexer and KV cache.
+For a **streaming MoE**, verification is not free. Checking B draft tokens requires loading the *union* of the experts those tokens route to, which expands as batching does.
 
-Expected: **1.5–2×**, so 0.78 s/token becomes roughly 0.45 s.
+**Measured on OLMoE-1B-7B (16 layers, 64 experts, top-8), 500 tokens, twelve reproducible runs across twelve seeds** (4 original: 42, 42/2500-token, 7, 123; 8-seed follow-up sweep: 1, 2, 3, 99, 256, 777, 1000, 2024 — run to check whether seed 123's near-miss was a real tail or noise):
 
-**The single most valuable optimization for a solo user**, because it improves *your* conversation rather than serving more people.
+| Draft tokens (B) | Measured bytes multiplier, full 12-seed range | Break-even multiplier* | Verdict |
+|---|---|---|---|
+| 2 | 1.54–1.86× | 1.25× | **NET LOSS, all 12 seeds** |
+| 4 | 2.20–2.59× | 1.82× | **NET LOSS, all 12 seeds** |
+| 8 | 3.06–3.91× | 2.35× | **NET LOSS, all 12 seeds** |
+
+*Assumes dense-model-typical acceptance rates (1.6, 2.2, 3.4 tokens at B=2/4/8), not measured on this MoE — no draft model was built.
+
+**Question closed.** The 8-seed follow-up sweep landed at 2.33–2.59× on B=4 — none of the new seeds approached seed 123's 2.20×, let alone crossed the 1.82× break-even line. Seed 123 was the natural low tail of a real distribution, not the leading edge of a different regime. Routing correlation is real — every layer measured below the independent-sampling prediction, so consecutive tokens do route to overlapping experts more than chance predicts — but across twelve independent seeds it never once cleared break-even at any tested window size. This is as settled as a placeholder-acceptance-rate experiment can make it; the only thing that would move it now is a real draft model's measured acceptance rate (see below).
+
+**Do not enable speculative decoding in the first working runtime.** GLM-5.2 ships an MTP head, so the mechanism costs nothing to have available, but budgeting engineering effort on it now is not justified by this result.
+
+**What would change this:** a real draft model's measured acceptance rate substantially above the assumed figures, or a different model's routing turning out to be more correlated than OLMoE's. Both are open, neither is expected to be worth chasing before the runtime otherwise works. See `architecture.md` section 6.5 for the full method and the reproduction script in this repository.
 
 ---
 
@@ -335,7 +347,7 @@ Three mitigations, in order of value:
 ## Which dials matter for which goal
 
 **Chat with a large model**
-Batch 1 (#3). Speculative decoding (#13). Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2).
+Batch 1 (#3). Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2). Speculative decoding (#13) is measured off; do not budget for it.
 
 **Many parallel coding agents**
 Multiple instances at batch 1 (#4), not one instance at high batch. Large batch acceptable *within* an instance if verifier-checked (#3). Maximum pipeline depth (#1). GLM-5.2 (#15).
