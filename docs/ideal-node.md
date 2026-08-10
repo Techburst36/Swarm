@@ -18,7 +18,7 @@ GLM-5.2 streams roughly 12.7 GB of expert weights per token. With speculative de
 
 At nine nodes per board, that is **~44 GB/s of storage per node.**
 
-The OSD32MP2 delivers ~1.9 GB/s. **The gap is 23x, and it is entirely in one spec.**
+The current RK3588 module delivers ~4.0 GB/s across three PCIe links. **The gap is roughly 11x, and it is entirely in one spec.**
 
 ---
 
@@ -26,14 +26,14 @@ The OSD32MP2 delivers ~1.9 GB/s. **The gap is 23x, and it is entirely in one spe
 
 | Requirement | Target | Current (OSD32MP2) | Gap |
 |---|---|---|---|
-| **Storage bandwidth per node** | **~44 GB/s** | ~1.9 GB/s | **23x** |
-| Memory bandwidth | ~136 GB/s | ~10 GB/s | 13x |
-| On-package or attached memory | 4–8 GB | ~2 GB | 3x |
-| Compute (INT8/INT4) | ~5 TOPS | 1.35 TOPS | 3.7x |
+| **Storage bandwidth per node** | **~44 GB/s** | ~4.0 GB/s | **11x** |
+| Memory bandwidth | ~136 GB/s | ~34 GB/s | 4x |
+| Attached memory | 4 to 8 GB | **8 to 32 GB** | **met** |
+| Compute (INT8/INT4) | ~5 TOPS | **6 TOPS** | **met** |
 | Inter-node link | 10 GbE or better | 1 GbE | 10x |
-| Package pitch | ≥0.8 mm | 1.0 mm | met |
+| Package | solder-down, inspectable | **LGA 506-pin** | **met** |
 | Power per node | ≤15 W | ~5 W (est.) | headroom |
-| Price per node | ≤\$300 | ~\$150 | 2x acceptable |
+| Price per node | 300 or less | **~\$268** | **met** |
 
 **Storage bandwidth is the only one that matters.** Everything else is either already close or follows from it. A part that hits 44 GB/s of storage almost certainly has the memory bandwidth to absorb it and the compute to use it.
 
@@ -145,7 +145,8 @@ This is the configuration where the pitch stops being "you have no choice" and b
 | Qualcomm QCS8550 (SOM) | ~10 GB/s | ~67 GB/s | SOM only, ~\$400 |
 | Flagship phone SoC | ~4 GB/s (UFS 4.0) | ~120 GB/s | **No** |
 | Mid-tier ARM SoC | ~1–2 GB/s | ~25 GB/s | Yes |
-| **OSD32MP2 (current)** | **1.9 GB/s** | **~10 GB/s** | **Yes** |
+| **RK3588 LGA module (current)** | **~4.0 GB/s** | **~34 GB/s** | **Yes, ~\$268** |
+| Octavo OSD32MP2 (superseded) | ~1.24 GB/s | ~9.6 GB/s | Yes |
 | Server CPU | 300+ GB/s | 460 GB/s | Yes, at 10x the price |
 
 **Phone SoCs are the closest and are drifting the right way**. UFS 4.0 and wide LPDDR5X are becoming standard in the mid-tier, and mid-tier parts do eventually reach the open component market through Rockchip, Amlogic, MediaTek and others.
@@ -164,7 +165,7 @@ Rockchip announced the RK3688 at their 2025 Investor Conference as the successor
 | Memory bandwidth | 136 GB/s | **~200 GB/s** (8-channel LPDDR5/5x/6 @ 8400 Mbps) | exceeds |
 | Memory per node | 4–8 GB | 16–32 GB feasible | exceeds |
 | Compute | 5 TOPS | 32 TOPS (RKNN-P3) | exceeds |
-| Vulkan path | required | Mali-class Magni GPU, open Panfrost/Panthor driver | met |
+| Compute API path | required | Arm Magni GPU (Mali lineage), open Panfrost/Panthor driver | met |
 | Purchasable |, | **Rockchip sells on the open market** | met |
 
 **Accessibility is why this matters more than the raw numbers.** Qualcomm and MediaTek gatekeep flagship silicon behind NDAs and \$400 modules from a handful of licensed vendors. Rockchip publishes datasheets and its parts routinely land on \$100–180 boards from Radxa, Orange Pi and Firefly. Radxa has already committed to using the RK3688 in the successor to its ROCK 5 family.
