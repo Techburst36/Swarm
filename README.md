@@ -10,7 +10,7 @@ Design stage. Nothing has been built. No number in this repository is anchored t
 
 Mixture-of-Experts decode at batch 1 is **memory-bandwidth-bound**, not compute-bound. Every weight is read once and discarded. A 744B model activates ~40B parameters per token, so ~95% of the weights sit idle at any step. That means the binding constraint isn't FLOPs, it's how fast you can move expert weights from storage into memory.
 
-A GPU has enormous compute and one memory bus. This design inverts that: **many modest processors, each with its own private storage channels.** Aggregate bandwidth scales with hardware count instead of being fixed at purchase. Four nodes with three drives each give ~16 GB/s on one 150 x 150 mm board, enough to hold a layer of any current frontier open-weight model.
+A GPU has enormous compute and one memory bus. This design inverts that: **many modest processors, each with its own private storage channels.** Aggregate bandwidth scales with hardware count instead of being fixed at purchase. Four nodes with three drives each give ~16 GB/s, split across small individual node blades plugged into a shared backplane, enough to hold a layer of any current frontier open-weight model.
 
 ## The general law
 
@@ -38,12 +38,14 @@ This is not a slow GPU. It's the opposite of a GPU, and MoE decode happens to si
 | RAM | 8 GB 64-bit LPDDR4x per node, ~34 GB/s (32 GB option available) |
 | Storage | 1x NVMe on PCIe 3.0 x4 plus 2x on PCIe 2.0 x1 per node |
 | Aggregate bandwidth | ~16 GB/s at 4 nodes (~18.8 GB/s if the 2.0 x1 links are populated), ~24 GB/s at 6 |
-| Interconnect | GMAC Ethernet |
-| Board | 150x150 mm, 4 layers |
+| Interconnect | GMAC Ethernet, PHY per blade, switched through the backplane |
+| Board | 4-6 individual 8-10 layer blades + one 4-layer backplane (not a single shared board) |
 | Power | ~80-90 W estimated (10-15 W/node) |
 | Cost | ~\$2,400-2,470 CAD estimated |
 
 Superseded the earlier 9x Octavo OSD32MP2 design (~\$2,775, 18 GB RAM, ~11.2 GB/s) once per-interface throughput caps and the GPU vendor were checked against primary sources rather than assumed — see `docs/chip-selection.md` for the full trail, including why the OSD32MP2 remains a reasonable runner-up.
+
+**Board split into blade + backplane** after confirming that four to six LGA-506 modules do not route on a single 4-layer board — each module's escape routing pushes a shared board to 8+ layers. One small, high-layer-count blade per node plugs into a large, simple 4-layer backplane that carries only power and switched Ethernet. See `docs/architecture.md` section 4.0 for the full reasoning, including why the Ethernet PHY lives on each blade rather than the backplane.
 
 ## Status
 

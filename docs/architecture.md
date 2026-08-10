@@ -103,13 +103,13 @@ The A76 is Armv8.2-A with native `SDOT`. Four of them at 2.4 GHz deliver well ov
 
 ## 3. Interconnect
 
-Nodes connect over **standard Ethernet**. The RK3588 provides GMAC interfaces; the carrier adds PHYs and magnetics, or routes RGMII directly between adjacent nodes.
+Nodes connect over **standard Ethernet**. The RK3588 provides a GMAC interface; each blade carries its own PHY and magnetics (see section 4.0), and every blade's conditioned Ethernet signal lands on a switch IC hosted on the backplane. No direct node-to-node RGMII — all traffic routes through the backplane switch.
 
 | Property | Value |
 |---|---|
 | Per-link throughput | ~125 MB/s at 1 GbE |
 | Latency | microseconds |
-| Topology | switched or chained, any-to-any |
+| Topology | switched, any-to-any, via the backplane switch |
 
 ### 3.1 Decode is unaffected, prefill is bounded
 
@@ -128,13 +128,54 @@ Ethernet-only inter-board data is a hard requirement of the [compatibility contr
 
 ## 4. Board
 
-### 4.1 Form factor
+### 4.0 Blade and backplane, superseding a single shared board
 
-**150 x 150 mm, 4 layers.** Modules on the top face, M.2 sockets on the bottom.
+**The original plan — four to six LGA-506 modules on one shared 150x150mm, 4-layer board — does not route.** Each module needs full escape routing for its LGA-506 breakout (PCIe 3.0 x4 diff pairs, PCIe 2.0 x1 pairs, GMAC, control and power) from a dense footprint out to via fields where it can reach other components. Doing that for one module on 4 layers is already tight. Doing it for four, sharing board area and needing routing channels between them, pushes into 8 or more layers — a materially different, and materially riskier, board.
 
-Each module is 2,250 mm2. On 19,600 mm2 of usable face, four modules occupy 46% and six occupy 69%. The PCB cost difference against 100 x 100 mm is roughly \$25 on a \$2,400 board, and the space buys routing channels, decoupling placement, thermal spacing and room to bodge a fix during bring-up.
+**Split into two boards instead: one small, high-layer-count blade per node, plugged into one larger, low-layer-count backplane.**
 
-### 4.2 Population
+- **Blade**: one LGA-506 module, its NVMe drives, its own Ethernet PHY and magnetics, on an 8 to 10 layer board sized to just the module footprint plus routing margin. High layer count, but the board is small, so cost per blade stays bounded even at 10 layers.
+- **Backplane**: 150x150mm-class, back down to **4 layers**, because the hard problem — LGA escape routing — never touches it. The backplane carries only power distribution, an already-PHY'd Ethernet signal per blade, and a couple of low-speed control lines (I2C for board-ID, a boot-select line).
+
+**This directly derisks the single largest unknown in the project.** `test-plan.md`'s unknown 3 (the LGA mechanical drawing and land pattern) can now be validated on one cheap blade before committing to four or six. A bad blade design costs one small board, not a $2,400 populated carrier. A blade that fails in the field gets swapped, not the whole board.
+
+#### Why the Ethernet PHY belongs on the blade, not the backplane
+
+Two very different things can cross a board-to-board connector labeled "Ethernet":
+
+- **Raw GMAC/RGMII** (PHY chip lives on the backplane): a parallel bus with tight timing and length-matching requirements — the same class of routing problem that made the shared board fail, just relocated to the backplane connector.
+- **Post-PHY, post-magnetics MDI signal** (PHY and magnetics live on each blade, next to the connector): electrically identical to what comes out of an RJ45 jack — isolated, common-mode-rejected, and forgiving. Real industrial backplane systems (CompactPCI, VPX, MicroTCA) route Ethernet across backplanes this way routinely, without exotic layer counts.
+
+**PHY and magnetics go on the blade.** The backplane connector only ever carries the conditioned signal.
+
+#### Why the backplane hosts the switch, not per-blade cables
+
+`compatibility.md` requires Ethernet-only inter-board data, and `dials.md`'s day/night pooling and multi-building federation scenarios assume a Swarm board can join or leave a fleet as a single unit. If each blade had its own cabled Ethernet jack, connecting two Swarm boards together would mean one cable per blade — 4 to 6 cables for a 2-board link, and it gets worse as more boards join a pool.
+
+**The backplane hosts a small Ethernet switch IC** that every blade's conditioned Ethernet signal lands on, with **one uplink port** leaving the board. A candidate part: **Realtek RTL8367S/RTL8367RB**, a 5-port Gigabit switch with integrated PHYs and an RGMII CPU port — enough ports for up to 4 blades plus the uplink, with the 6-node configuration needing a second switch or a larger part. Connecting a Swarm board to another Swarm board, or to the rest of a network, becomes one cable, exactly the abstraction the rest of the docs already assume.
+
+#### Connector
+
+**Perpendicular mount, not stacked/parallel.** The blade stands up from the backplane like a card in a slot — this is what makes "one small blade first, swap on failure" physically real, and keeps the backplane footprint compact regardless of blade count.
+
+Two families fit the requirement (power, conditioned Ethernet, and a few low-speed lines — no PCIe or LPDDR crossing the connector, so no controlled-impedance high-speed requirement):
+
+- **Raw card-edge** (like a RAM slot): cheapest, but exposed gold-finger contacts wear with repeated insertion and have no mechanical retention. Given the disaster-zone/repeated-swap use case under consideration, this is the weaker choice.
+- **Right-angle board-to-board** (pin-and-socket, not exposed edge fingers): real mechanical retention, better insertion-cycle ratings, no oxidation-prone exposed contacts. Samtec's **Tiger Eye** family (1.27mm pitch, right-angle, locking clip option) is a reasonable starting point — the signal count here (power, one Ethernet MDI pair or two, I2C, boot-select) is modest enough that a general-purpose signal connector works; a dedicated high-power family (Samtec PowerStrip or similar) is worth a second look once real per-blade current draw is measured, per unknown 4 below.
+
+**Recommendation: right-angle board-to-board over card-edge**, given the swap-and-repair use case this design is explicitly optimizing for.
+
+**Still open:** exact pin/signal count and connector part number (pending a real per-blade power/signal budget), whether 4 or 6 ports on the backplane switch is the right target, and blade mechanical dimensions once the LGA land pattern is in hand.
+
+---
+
+### 4.1 Blade form factor
+
+**Blade sized to the module footprint plus routing margin, 8 to 10 layers.** Backplane at 150x150mm-class, **4 layers**, hosting 4 to 6 blade connectors plus the switch IC and power input.
+
+Each module is 2,250 mm2. A blade sized around it, rather than four to six modules sharing one large board, is what makes the high layer count affordable — the expensive layers are only ever as large as they need to be.
+
+### 4.2 Population, per blade
 
 | Interface | Attached per node | Throughput |
 |---|---|---|
@@ -145,7 +186,7 @@ Each module is 2,250 mm2. On 19,600 mm2 of usable face, four modules occupy 46% 
 
 The third PCIe 2.0 lane is shared with USB 3.0 SuperSpeed and is reserved for a host or debug link.
 
-| | 4 nodes | 6 nodes |
+| | 4 blades | 6 blades |
 |---|---|---|
 | Memory | 32 GB | 48 GB |
 | Storage bandwidth | **~16 GB/s** | **~24 GB/s** |
@@ -189,20 +230,21 @@ Against 4.0 GB/s of attached storage, that is **2.6x of headroom.** Storage is c
 
 The module requires **4.0 V +/- 5% on VCC4V0\_SYS**. All other rails are generated on-module.
 
-Distribute **12 V** across the board and step down to 4.0 V per node. At 12 V a 6-node board's ~135 W is 11 A rather than 34 A at 4 V, which keeps conductors and connectors reasonable.
+**Distribute 12 V across the backplane, step down to 4.0 V on each blade.** At 12 V a 6-blade board's ~135 W is 11 A rather than 34 A at 4 V, which keeps backplane conductors and the connector's power pins reasonable. Per-blade regulation also means a blade can be pulled and reseated without touching any other blade's supply.
 
 Per-board DC input, never chained between boards. Metal standoffs tie board grounds together.
 
-**The tight tolerance is the design point to get right.** The vendor's reference carrier schematic shows their regulation approach and should be the starting point.
+**The tight tolerance is the design point to get right, on each blade's own regulator.** The vendor's reference carrier schematic shows their regulation approach and should be the starting point.
 
 ### 4.6 Design-for-bring-up
 
-- **8 M3 mounting holes**, corners and side midpoints, for stacking geometry and a ground path
-- **All three PCIe 2.0 lanes routed** even if not populated. Free now, impossible later
-- **Per-node current sense on I2C**, because power draw is currently an estimate
-- **Test points on every rail and each RGMII pair**
-- **Status LED and boot-select jumper per node**
-- **Board ID EEPROM** for stack addressing
+- **Backplane switch IC candidate: Realtek RTL8367S/RTL8367RB** (5-port Gigabit, integrated PHYs, RGMII CPU port) or equivalent — enough ports for 4 blades plus uplink; 6 blades needs a second switch or a larger part
+- **Blade connector candidate: Samtec Tiger Eye**, 1.27mm right-angle, or an equivalent right-angle board-to-board family — power, conditioned Ethernet, I2C, boot-select only, no controlled-impedance requirement
+- **All three PCIe 2.0 lanes routed on the blade** even if not populated. Free now, impossible later
+- **Per-blade current sense on I2C**, because power draw is currently an estimate
+- **Test points on every rail, on both the blade and the backplane**
+- **Status LED and boot-select jumper per blade**
+- **Board ID EEPROM per blade** for backplane addressing
 - **Fan header and standoff airgap.** Four A76 clusters at load need real airflow, and thermal throttling will otherwise corrupt every measurement
 
 ---
@@ -379,7 +421,7 @@ Ordered by how much they gate everything else.
 1. ~~Does speculative decoding pay on a streaming MoE?~~ **Resolved, section 6.5: no, measured net loss across 12 seeds. Disabled.**
 2. **Real NVMe throughput on RK3588** at 16 MB block size, with and without O\_DIRECT. Every timing figure derives from ~3.2 GB/s on the x4 link.
 3. **Expert popularity distribution** for GLM-5.2, given Quantile Balancing. Determines whether caching is worth 5% or 15%.
-4. **Module dimensions confirmed** at 45 x 50 mm, but carrier layout needs the mechanical drawing and LGA land pattern.
+4. **Module dimensions confirmed** at 45 x 50 mm, but blade layout needs the mechanical drawing and LGA land pattern. The blade/backplane split (section 4.0) means this now blocks only one small blade, not the whole board.
 5. **Real power under sustained load.** The ~22 W per node estimate is from product category, not measurement.
 6. **Load imbalance factor** across nodes in gang mode. Estimated at 1.5x to 2x.
 7. **Thermal behaviour** of four A76 clusters on one board under continuous matmul.
@@ -395,11 +437,13 @@ Ordered by how much they gate everything else.
 
 **Step 3, ~\$120 more.** A second SBC. Two nodes over Ethernet is where the distributed runtime gets written and debugged: expert sharding, transport, streaming scheduler, weighted distribution, failover. **This is the year of work, and it is hardware-agnostic.**
 
-**Step 4, free.** Carrier schematic and layout in KiCad, adapting the vendor's published reference design.
+**Step 4, free.** Blade schematic and layout in KiCad, adapting the vendor's published reference design. Backplane schematic and layout separately — much simpler, 4 layers, no LGA breakout.
 
-**Step 5, ~\$400.** Fab five carriers, populate one with a single module and one drive. Validate LGA reflow, 4.0 V regulation, PCIe routing, Ethernet, thermals.
+**Step 5, ~\$400.** Fab **one blade** and the backplane. Populate the single blade with one module and one drive. Validate LGA reflow on the smallest, cheapest possible board before committing to more. Validate 4.0 V regulation, PCIe routing, the blade connector, Ethernet through the backplane switch, thermals.
 
-**Step 6, ~\$2,400.** Populate four nodes. This is a complete device: a frontier MoE model plus a local corpus with retrieval, in a box, with no network dependency.
+**Step 6, ~\$400 more.** Fab three to five more blades once step 5 validates the design — each blade is small and cheap to iterate on independently. A bad blade revision costs one blade, not the whole board.
+
+**Step 7, ~\$2,000.** Populate the remaining blades. This is a complete device: a frontier MoE model plus a local corpus with retrieval, in a box, with no network dependency — and any single blade can be swapped without touching the rest.
 
 ---
 

@@ -253,6 +253,8 @@ Nine nodes with 54 storage devices therefore gave ~11.2 GB/s, at ~$2,775 and 63 
 
 **Still open:** the LGA land pattern and mechanical drawing for layout, real NVMe throughput on RK3588 silicon, sustained power draw, and 4.0 V regulation to ±5% under transient load. The dev-board question got easier alongside this pivot too — RK3588 SBCs (Orange Pi 5, Rock 5C, NanoPi) run $100–150 with published llama.cpp benchmarks, a materially better first purchase than a bare-silicon dev kit at similar cost.
 
+**Unverified, flagged rather than assumed:** an automotive- or industrial-temperature-rated (down to roughly -40°C) variant of this LGA module or an equivalent RK3588 module was suggested as a possible disaster-zone/extended-environment backup. A search of Banana Pi's and ArmSoM's official documentation did not turn up a confirmed automotive-rated version of the LM7 specifically — industrial-temperature RK3588 modules exist in the broader ecosystem (other vendors sell them), but nothing ties one to this exact pinout yet. Not written into the primary spec until confirmed against a real datasheet or vendor contact.
+
 ---
 
 ## What the trail actually shows
