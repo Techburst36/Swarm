@@ -1,0 +1,34 @@
+---------------------------------------------------------------------------------
+ Layer  B=2 actual  pred  ratio  B=4 actual  pred  ratio  B=8 actual  pred  ratio
+---------------------------------------------------------------------------------
+     0   13.25   15.0  0.883   21.77   26.5  0.822   33.79   42.0  0.804
+     1   13.32   15.0  0.888   21.95   26.5  0.829   34.60   42.0  0.824
+     2   12.73   15.0  0.848   20.34   26.5  0.768   31.10   42.0  0.740
+     3   13.01   15.0  0.867   21.03   26.5  0.794   32.21   42.0  0.767
+     4   11.90   15.0  0.793   18.23   26.5  0.688   27.68   42.0  0.659
+     5   12.01   15.0  0.801   18.16   26.5  0.686   26.71   42.0  0.636
+     6   12.03   15.0  0.802   18.25   26.5  0.689   26.72   42.0  0.636
+     7   12.52   15.0  0.834   19.53   26.5  0.737   28.99   42.0  0.690
+     8   12.57   15.0  0.838   19.67   26.5  0.743   29.73   42.0  0.708
+     9   12.95   15.0  0.864   20.78   26.5  0.785   31.64   42.0  0.753
+    10   13.75   15.0  0.916   22.60   26.5  0.853   34.58   42.0  0.823
+    11   12.89   15.0  0.859   20.30   26.5  0.766   30.82   42.0  0.734
+    12   12.99   15.0  0.866   20.47   26.5  0.773   31.08   42.0  0.740
+    13   12.90   15.0  0.860   19.97   26.5  0.754   29.82   42.0  0.710
+    14   12.53   15.0  0.835   19.11   26.5  0.722   28.54   42.0  0.679
+    15   12.51   15.0  0.834   19.01   26.5  0.718   28.22   42.0  0.672
+---------------------------------------------------------------------------------
+OVERALL   12.74   15.0  0.849   20.07   26.5  0.758   30.39   42.0  0.723
+---------------------------------------------------------------------------------
+
+
+Expert popularity: top-5% (4 of 64) experts capture on average 27.4% of all routing decisions across layers. This feeds the expert-caching question.
+
+OLMoE-1B-7B generated 500 tokens.
+
+Break-even analysis (architecture.md section 6.5), assuming acceptance rates {2: 1.6, 4: 2.2, 8: 3.4} -- THESE ARE PLACEHOLDERS, not measured, since no draft model was run here:
+  B=2: measured 1.59x bytes vs break-even 1.25x (needs < break-even to pay) -> NET LOSS  [independent-routing case would be 1.88x]
+  B=4: measured 2.51x bytes vs break-even 1.82x (needs < break-even to pay) -> NET LOSS  [independent-routing case would be 3.31x]
+  B=8: measured 3.80x bytes vs break-even 2.35x (needs < break-even to pay) -> NET LOSS  [independent-routing case would be 5.25x]
+
+DISABLE speculative decoding on this streaming architecture. Even crediting the assumed ~2.2 tokens accepted at B=4, the measured expert union is large enough that verification costs more bytes than the break-even point allows. This holds unless the real draft model's acceptance rate is substantially higher than assumed.

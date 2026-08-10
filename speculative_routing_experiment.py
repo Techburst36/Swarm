@@ -124,10 +124,9 @@ def fibonacci_search(arr: list[int], target: int) -> int:
 
 # ── Hook machinery ─────────────────────────────────────────────────────────────
 def install_router_hooks(model: OlmoeForCausalLM) -> dict:
-    """Register forward hooks on every OlmoeTopKRouter (gate) in the model.
+    """Register forward hooks on every router in the model.
 
     Returns a dict to be populated: captured[layer_idx].append(selected_experts_array)
-    The gate returns (router_logits, router_scores, router_indices); we capture indices.
     """
     captured = defaultdict(list)
 
@@ -141,8 +140,8 @@ def install_router_hooks(model: OlmoeForCausalLM) -> dict:
         return hook
 
     for i in range(NUM_LAYERS):
-        gate = model.model.layers[i].mlp.gate
-        gate.register_forward_hook(make_hook(i))
+        router = model.model.layers[i].mlp.gate
+        router.register_forward_hook(make_hook(i))
 
     return captured
 
