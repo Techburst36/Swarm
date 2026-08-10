@@ -32,27 +32,18 @@ This is not a slow GPU. It's the opposite of a GPU, and MoE decode happens to si
 
 | | |
 |---|---|
-| Nodes | 4 to 6 x RK3588 LGA module (Banana Pi BPI-LM7 / ArmSoM LM7) |
-| Package | 45 x 50 mm, LGA 506-pin, solder-down |
-| CPU | 4x Cortex-A76 @ 2.4 GHz + 4x A55, Armv8.2 with SDOT |
-| RAM | 8 GB 64-bit LPDDR4x per node (up to 32 GB options) |
+| Nodes | 4 to 6x RK3588 LGA module (Banana Pi BPI-LM7 / ArmSoM LM7) |
+| Package | 45x50 mm, LGA 506-pin, solder-down |
+| CPU | 4x Cortex-A76 @ 2.4 GHz + 4x A55, Armv8.2 with SDOT, Mali-G610 MP4 |
+| RAM | 8 GB 64-bit LPDDR4x per node, ~34 GB/s (32 GB option available) |
 | Storage | 1x NVMe on PCIe 3.0 x4 plus 2x on PCIe 2.0 x1 per node |
-| Aggregate bandwidth | ~16 GB/s at 4 nodes, ~24 GB/s at 6 |
-| Interconnect | Ethernet |
-| Board | 150 x 150 mm, 4 layers |
-| Power | ~90 W at 4 nodes |
-| Cost | ~\$2,400 at 4 nodes |
+| Aggregate bandwidth | ~16 GB/s at 4 nodes (~18.8 GB/s if the 2.0 x1 links are populated), ~24 GB/s at 6 |
+| Interconnect | GMAC Ethernet |
+| Board | 150x150 mm, 4 layers |
+| Power | ~80-90 W estimated (10-15 W/node) |
+| Cost | ~\$2,400-2,470 CAD estimated |
 
-Every frontier open-weight model's layer fits on one board:
-
-| Model | Total | Layer @ Q4 | Boards |
-|---|---|---|---|
-| Qwen3.5 | 397B | ~2.8 GB | 1 |
-| GLM-5.2 | 744B | 5.25 GB | 1 |
-| DeepSeek V4-Pro | 1.6T | ~9 GB | 1 |
-| Kimi K3 | 2.78T | 14.83 GB | 1 |
-
-Board count above the minimum buys **speed**, linearly. It does not buy capability.
+Superseded the earlier 9x Octavo OSD32MP2 design (~\$2,775, 18 GB RAM, ~11.2 GB/s) once per-interface throughput caps and the GPU vendor were checked against primary sources rather than assumed — see `docs/chip-selection.md` for the full trail, including why the OSD32MP2 remains a reasonable runner-up.
 
 ## Status
 
@@ -61,7 +52,8 @@ Board count above the minimum buys **speed**, linearly. It does not buy capabili
 - [x] Board floorplan and component tally
 
 - [x] Speculative decoding measured on OLMoE-1B-7B: **net loss at every tested batch size across 12 seeds, disabled, question closed** (see `docs/architecture.md` §6.5)
-- [ ] Measure real NVMe throughput on an RK3588 SBC (~\$120), **blocking**
+- [ ] Confirm PCIe 3.0 x4 and real NVMe throughput on RK3588 SBC (~\$120), **blocking**
+- [ ] Power draw under sustained load, **blocking**
 - [ ] Schematic
 - [ ] PCB layout
 - [ ] Distributed runtime

@@ -4,3 +4,4 @@ fp-info-cache
 *.net
 gerbers/
 .DS_Store
+venv/

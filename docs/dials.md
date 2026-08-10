@@ -17,17 +17,17 @@ Reference document, read the entry you need, not the whole thing. Companion to [
 | 5 | Context length | sessions ↔ conversation memory | software |
 | 6 | Quantization format | accuracy ↔ bytes moved | software |
 | 7 | Resident vs streamed weights | hardware ↔ speed | software |
-| 8 | Storage population per node | money ↔ bandwidth | assembly |
-| 9 | Drive selection | money ↔ **sustained read** | purchase |
+| 8 | Storage tier population | money ↔ bandwidth | assembly |
+| 9 | **eMMC module density** | money ↔ **bandwidth** | **fab** |
 | 10 | Node population per board | money ↔ capability | assembly |
 | 11 | **Board dimensions** | money ↔ routability | **fab** |
-| 12 | Node memory configuration | money ↔ context | purchase |
-| 13 | Speculative decoding | **may be a net loss here** | software |
+| 12 | eMMC grade | money ↔ reliability | assembly |
+| 13 | Speculative decoding | measured net loss, disabled | software |
 | 14 | Expert caching and prefetch | complexity ↔ latency | software |
 | 15 | Model choice | everything | software |
 | 16 | **Board specialization** | workload envelope | **fab** |
 
-**Fab-time dials are permanent.** Numbers 11 and 16 cannot be changed after the PCB is ordered. Dial 13 is the one most likely to be got wrong, because speculative decoding is free on dense models and may be a net loss here.
+**Fab-time dials are permanent.** Numbers 9, 11, and 16 cannot be changed after the PCB is ordered, and 9 is the one most likely to be got wrong because it looks like a capacity decision.
 
 ---
 
@@ -54,16 +54,16 @@ Because the interconnect is a switched fabric rather than a ring, TP groups are 
 
 ## 2. Board count above the minimum
 
-The minimum is one board, 18 GB holds a layer of every current frontier model. Above that, each node adds ~4.0 GB/s and each 4-node board adds ~16 GB/s to a fixed workload.
+The minimum is one board, 18 GB holds a layer of every current frontier model. Above that, each board adds ~15.7 GB/s to a fixed workload.
 
 **GLM-5.2** (12.3 GB streamed per token):
 
 | Boards | Cost | Bandwidth | Per token | With spec decoding |
 |---|---|---|---|---|
-| 1 | ~\$2,775 | 11.2 GB/s | 1.13 s | ~0.51 s |
-| 2 | ~\$5,550 | 22.4 | 0.57 s | ~0.26 s |
-| 3 | ~\$8,325 | 33.6 | 0.38 s | ~0.17 s |
-| 4 | ~\$11,100 | 44.8 | 0.28 s | ~0.13 s |
+| 1 | ~$2,775 | 15.7 GB/s | 0.78 s | ~0.45 s |
+| 2 | ~$5,550 | 31.4 | 0.39 s | ~0.22 s |
+| 3 | ~$8,325 | 47.1 | 0.26 s | ~0.15 s |
+| 4 | ~$11,100 | 62.8 | 0.20 s | ~0.11 s |
 
 **Kimi K3** (24.6 GB per token): double every time above.
 
@@ -157,7 +157,7 @@ FP8 KV cache roughly doubles every figure.
 
 With 18 GB per board, everything up to Q8 fits on one board, so unlike smaller-memory designs, format choice does **not** drive board count until BF16.
 
-**But it drives bytes moved per token, which is what sets speed.** Q8 doubles the streaming volume and therefore roughly doubles per-token time on the same hardware. Adding a board to compensate costs ~\$2,775 and gets you back to where Q4 already was.
+**But it drives bytes moved per token, which is what sets speed.** Q8 doubles the streaming volume and therefore roughly doubles per-token time on the same hardware. Adding a board to compensate costs ~$2,775 and gets you back to where Q4 already was.
 
 **The best format for this machine is NVFP4-style mixed quantization**: 4-bit on the MoE expert linears only, with shared experts, attention, embeddings and early dense layers at FP8 or BF16. Reported accuracy is within about a point of the FP8 baseline.
 
@@ -184,56 +184,55 @@ The real value is models that would not otherwise fit. Flux.1-dev at 12B and SD3
 
 ---
 
-## 8. Storage population per node
+## 8. Storage tier population
 
-Three usable PCIe links per node, from the confirmed LGA pinout:
+Three independent tiers per node, populated separately:
 
-| Link | Attached | Throughput | Cost |
-|---|---|---|---|
-| PCIe 3.0 x4 | 1x M.2 2280 NVMe | ~3.2 GB/s | ~\$112 (512 GB) |
-| PCIe 2.0 x1 | 1x M.2 2242 NVMe | ~400 MB/s | ~\$80 |
-| PCIe 2.0 x1 | 1x M.2 2242 NVMe | ~400 MB/s | ~\$80 |
-| **Total** | **3 drives** | **~4.0 GB/s** | ~\$272 |
+| Tier | Devices per node | Bandwidth | Capacity | Cost per board |
+|---|---|---|---|---|
+| eMMC (SDMMC ×3) | 3 | 840 MB/s | 96 GB | ~$675 |
+| NVMe (PCIe Gen2) | 1 | ~500 MB/s | 256 GB–1 TB | ~$270 |
+| Octal NAND (OSPI ×2) | 2 | ~400 MB/s | 1 GB | ~$110 |
 
-A fourth PCIe 2.0 lane exists but is shared with USB 3.0 SuperSpeed and is better reserved for a host link.
-
-Cumulative per 4-node board:
+Cumulative per board:
 
 | Populated | Bandwidth | GLM-5.2/token |
 |---|---|---|
-| x4 link only | 12.8 GB/s | 0.81 s |
-| **All three links** | **16 GB/s** | **0.65 s** |
+| eMMC only | 7.56 GB/s | 1.63 s |
+| eMMC + NVMe | 12.1 GB/s | 1.02 s |
+| **All three** | **15.7 GB/s** | **0.78 s** |
 
-**Headroom.** Node DRAM gives roughly 10.5 GB/s of effective streaming, so 4.0 GB/s of storage leaves 2.6x of margin. Unlike the previous design, memory is not close to binding.
+The NAND tier is small (9 GB per board) but fast, which makes it the natural home for pinned shared experts and the hot-expert LRU cache from #14.
 
-**Route all three links at fab time regardless.** Populating later is cheap; adding traces is impossible.
+**Two caveats.** The NVMe tier consumes the shared 5 Gbit/s PHY, so USB 3.0 becomes unavailable. And whether the Octal SPI ports are real xSPI flash controllers rather than 50 Mbit peripheral SPI is unverified, if they are the latter, the third tier is worth ~50 MB/s and 18 parts should come off the board.
+
+**Route all three at fab time regardless.** Populating later is cheap; adding traces is impossible.
 
 ---
 
-## 9. Drive selection
+## 9. eMMC module density, the dial most likely to be got wrong
 
-The workload is **read-only in practice.** A model loads once and streams forever; weights are never modified. Writes occur only at initial load, occasional KV paging, and logging.
+**HS400 support does not mean HS400 speed.** Sequential read by density, eMMC 5.1, 8-bit bus, HS400 mode:
 
-| Spec | Requirement | Why |
+| Density | Sequential read |
+|---|---|
+| 4 GB | 160 MB/s |
+| 8 GB | 160 MB/s |
+| **16 GB** | **160 MB/s** |
+| **32 GB** | **280 MB/s** |
+| 64 GB | 280 MB/s |
+| 128 GB | 280 MB/s |
+
+Below 32 GB there are not enough NAND dies to interleave and the interface idles.
+
+| Module | Per board | GLM-5.2/token |
 |---|---|---|
-| **DRAM cache** | **mandatory** | DRAM-less drives collapse on sustained reads, every access hits the mapping table |
-| Generation | **Gen3** | The link is PCIe 3.0. A Gen4 drive negotiates down and costs more for nothing |
-| Capacity | **512 GB minimum** | Below that, too few NAND dies to saturate the link |
-| NAND type | TLC preferred | QLC is acceptable given near-zero writes, but check sustained read behaviour |
-| Write speed | irrelevant | Do not pay for it |
-| Endurance | non-issue | ~600 TBW per TB at near-zero writes outlives the project |
+| 16 GB | 4.32 GB/s eMMC tier | ~1.4 s |
+| **32 GB** | **7.56 GB/s eMMC tier** | **~0.78 s** |
 
-**Sequential read on the box is not the number that matters.** Expert reads are roughly 16 MB chunks, sitting between sequential and random. A drive advertising 3,400 MB/s sequential may deliver 1,200 on this pattern. Measure at 16 MB block size.
+**32 GB is mandatory, for bandwidth, not capacity.** Choosing 16 GB to save money nearly halves the machine's speed permanently, and the footprint difference means you cannot swap later without a respin.
 
-Capacity sizing, model split across nodes:
-
-| Model | Per node, 4 nodes | Per node, 6 nodes |
-|---|---|---|
-| GLM-5.2 | 105 GB | 70 GB |
-| Kimi K3 | 390 GB | 260 GB |
-| K3 plus a 445 GB corpus | 500 GB | 334 GB |
-
-512 GB per node covers everything including a local corpus. 1 TB gives room for several models resident.
+**The over-provisioning is not wasted.** 27 × 32 GB is 864 GB against GLM-5.2's 419 GB. The surplus funds parked-session KV, a local corpus with embeddings and full-text index, a LoRA library, and a resident draft model.
 
 ---
 
@@ -259,14 +258,14 @@ JLCPCB assembles a subset of designed pads, so boards can be populated increment
 
 The component tally at 100 × 100 mm is tight: roughly 90% of the usable top face and, with all three storage tiers populated, over 100% of the bottom. Dropping the NVMe and NAND tiers brings it to about 72%.
 
-The PCB is roughly 0.2% of BOM cost, \$5 against ~\$2,775. Going to 150 × 150 mm costs perhaps \$25 and buys:
+The PCB is roughly 0.2% of BOM cost, $5 against ~$2,775. Going to 150 × 150 mm costs perhaps $25 and buys:
 
 - Wide routing channels
 - Proper decoupling placement near each BGA
 - Thermal spacing between nine packages
 - Room to bodge a fix during bring-up
 
-**First boards die during bring-up, not during design.** The \$25 buys margin where it matters most.
+**First boards die during bring-up, not during design.** The $25 buys margin where it matters most.
 
 Counterarguments, all small: slightly longer RGMII traces (fine at 125 MHz), more board flex during reflow (manageable at 4 layers on 1.6 mm FR4), less dense stacking.
 
@@ -274,43 +273,42 @@ Counterarguments, all small: slightly longer RGMII traces (fine at 125 MHz), mor
 
 ---
 
-## 12. Node memory configuration
+## 12. eMMC grade
 
-The module ships in 4, 8, 16 and 32 GB variants. 8 GB is default and the basis of every figure here.
+| Grade | Unit (32 GB) | Per board (×27) |
+|---|---|---|
+| Industrial | ~$45–60 | $1,215–1,620 |
+| Consumer | ~$18–30 | $486–810 |
 
-| Per node | 4-node board | Holds a layer of | Free for KV |
-|---|---|---|---|
-| 4 GB | 16 GB | everything up to Kimi K3 | ~1 GB |
-| **8 GB** | **32 GB** | everything | **~17 to 26 GB** |
-| 16 GB | 64 GB | everything | ~49 GB |
+Industrial buys extended temperature range, power-loss protection, and long-term availability guarantees. **None of which this application needs.**
 
-**8 GB is the sweet spot.** Kimi K3's 14.83 GB layer fits in 32 GB with 17 GB spare, which is ample KV headroom. Going to 16 GB per node buys context and concurrent sessions, not speed.
-
-**4 GB is a false economy.** A 4-node board at 16 GB holds K3's layer with almost nothing left, so context collapses.
+Endurance note: MLC eMMC is roughly 3,000 P/E cycles. This workload is read-dominated, so endurance is not the binding concern, but do not put optimizer state or heavy logging on it.
 
 ---
 
 ## 13. Speculative decoding, and why it may not apply
 
-**This entry was previously titled "the only free latency win." That was wrong on this architecture, and the correction matters.**
+**This entry was previously titled "the only free latency win." That was wrong on this architecture, and the correction matters. It is now titled by the actual measured result.**
 
-For a **dense** model, speculative decoding is close to free. A small draft model proposes several tokens and the large model verifies them in one pass, and because verification reads the same weights regardless of how many tokens are checked, any acceptance above 1 is a direct multiplier. Reported gains of 1.5x to 2x come from this regime.
+For a **dense** model, speculative decoding is close to free. A small draft model proposes several tokens and the large model verifies them in one pass, and because verification reads the same weights regardless of how many tokens are checked, any acceptance above 1 is a direct multiplier. Reported gains of 1.5–2× come from this regime.
 
-For a **streaming MoE**, verification is not free. Checking B draft tokens requires loading the *union* of the experts those tokens route to, which expands exactly as batching does:
+For a **streaming MoE**, verification is not free. Checking B draft tokens requires loading the *union* of the experts those tokens route to, which expands as batching does.
 
-| Draft tokens | Distinct experts (GLM-5.2) | Bytes vs 1 token |
-|---|---|---|
-| 1 | 8 | 1.0x |
-| 2 | 15.8 | 1.97x |
-| 4 | 30.5 | **3.81x** |
+**Measured on OLMoE-1B-7B (16 layers, 64 experts, top-8), 500 tokens, twelve reproducible runs across twelve seeds** (4 original: 42, 42/2500-token, 7, 123; 8-seed follow-up sweep: 1, 2, 3, 99, 256, 777, 1000, 2024 — run to check whether seed 123's near-miss was a real tail or noise):
 
-At 4 draft tokens with a typical acceptance around 2.2, you pay 3.8x the bytes for 2.2x the tokens. **Net loss.**
+| Draft tokens (B) | Measured bytes multiplier, full 12-seed range | Break-even multiplier* | Verdict |
+|---|---|---|---|
+| 2 | 1.54–1.86× | 1.25× | **NET LOSS, all 12 seeds** |
+| 4 | 2.20–2.59× | 1.82× | **NET LOSS, all 12 seeds** |
+| 8 | 3.06–3.91× | 2.35× | **NET LOSS, all 12 seeds** |
 
-**The open question is routing correlation.** Consecutive tokens in similar context may route to substantially overlapping experts, in which case the real union is far below the independent-sampling estimate. High correlation could still yield 1.2x to 1.4x. Low correlation means speculation should be disabled here.
+*Assumes dense-model-typical acceptance rates (1.6, 2.2, 3.4 tokens at B=2/4/8), not measured on this MoE — no draft model was built.
 
-**Measure before enabling.** This is testable today against a routing trace from any MoE model, with no hardware. It is the highest-value software experiment currently available.
+**Question closed.** The 8-seed follow-up sweep landed at 2.33–2.59× on B=4 — none of the new seeds approached seed 123's 2.20×, let alone crossed the 1.82× break-even line. Seed 123 was the natural low tail of a real distribution, not the leading edge of a different regime. Routing correlation is real — every layer measured below the independent-sampling prediction, so consecutive tokens do route to overlapping experts more than chance predicts — but across twelve independent seeds it never once cleared break-even at any tested window size. This is as settled as a placeholder-acceptance-rate experiment can make it; the only thing that would move it now is a real draft model's measured acceptance rate (see below).
 
-GLM-5.2 ships an MTP head, so the mechanism is available at no training cost. The question is purely whether it pays on a streaming architecture.
+**Do not enable speculative decoding in the first working runtime.** GLM-5.2 ships an MTP head, so the mechanism costs nothing to have available, but budgeting engineering effort on it now is not justified by this result.
+
+**What would change this:** a real draft model's measured acceptance rate substantially above the assumed figures, or a different model's routing turning out to be more correlated than OLMoE's. Both are open, neither is expected to be worth chasing before the runtime otherwise works. See `architecture.md` section 6.5 for the full method and the reproduction script in this repository.
 
 ---
 
@@ -346,24 +344,10 @@ Three mitigations, in order of value:
 
 ---
 
-## Worked example: one firm, day and night
-
-Dial 4 in practice, at building scale, using the properties established in [architecture.md](architecture.md) and [compatibility.md](compatibility.md): Ethernet-only interconnect, per-board power, no chaining. Twenty employees, one 4-node board each.
-
-**Day, per desk, isolated.** One board, undivided, ~1.5 tok/s: an interactive autocomplete-style agent, no contention with anyone else's work. Or split 4 nodes into 2 instances of 2: two small parallel reviewers. Or 4 instances of 1 node each: a batch of tiny single-purpose agents. Same 16 GB/s, divided differently depending on what the desk needs that hour. Context stays whatever fits, since lowering it barely moves speed (see dial 5) and mainly frees room for more concurrent sessions rather than faster ones.
-
-**Night, building-wide, pooled.** All twenty boards join over Ethernet, which is possible only because inter-board data is Ethernet-only per the compatibility contract. Eighty nodes, ~320 GB/s aggregate. Either gang everything into one Kimi K3 instance for maximum single-task throughput, or partition into ten instances of eight nodes running ten different overnight jobs in parallel, a heterogeneous pipeline at building scale rather than one machine's scale. Membership changes at both boundaries, boards leaving the pool at login time and rejoining at night, are the same graceful-membership logic dial 4 and the compatibility contract already require.
-
-**Nothing about the hardware differs between these modes.** It is the same boards, repartitioned by the runtime on a schedule. The scheduling work (detect idle desks, form the pool, hand boards back before login, all without a visible slowdown) is the same weighted-sharding and membership-change machinery required elsewhere, applied at a different scale.
-
-**The one lever worth using unconditionally.** Pinning the shared expert (dial 14) costs the same fixed 1.6 GB and yields the same roughly 11% reduction regardless of instance count, pool size, or time of day. It has no tradeoff, so there is no scenario where it should be off.
-
----
-
 ## Which dials matter for which goal
 
 **Chat with a large model**
-Batch 1 (#3). Speculative decoding (#13). Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2).
+Batch 1 (#3). Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2). Speculative decoding (#13) is measured off; do not budget for it.
 
 **Many parallel coding agents**
 Multiple instances at batch 1 (#4), not one instance at high batch. Large batch acceptable *within* an instance if verifier-checked (#3). Maximum pipeline depth (#1). GLM-5.2 (#15).
@@ -400,12 +384,12 @@ Costs nothing extra: same header, same firmware, two populate lists.
 
 Everything else is software or a later purchase. These are locked when PCBs are ordered:
 
-1. **Board dimensions**, 150 x 150 mm
-2. **All three PCIe links routed per node**, even if not populated
-3. **4.0 V regulation per node**, to +/- 5%
-4. **Ethernet-only inter-board data**, per the [compatibility contract](compatibility.md)
-5. **Board type**, general purpose or specialized per dial 16
+1. **Board dimensions**, 100 × 100 mm or 150 × 150 mm
+2. **eMMC footprint sized for 32 GB parts**, bandwidth, not capacity
+3. **All three storage tiers routed**, even if not populated
+4. **PCIe and all three Ethernet ports broken out** per node
+5. **Board type**, general purpose, or specialized per #16
 
 ---
 
-*Companion to [architecture.md](architecture.md) and [chip-selection.md](chip-selection.md). Figures derive from vendor datasheets, a published LGA pinout, and arithmetic. Nothing here is anchored to a measurement on real silicon.*
+*Companion to [architecture.md](architecture.md) and [chip-selection.md](chip-selection.md). Figures derive from vendor datasheets, published model configs, and arithmetic. Nothing here is anchored to a measurement on real silicon.*
