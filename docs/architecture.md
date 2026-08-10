@@ -2,7 +2,7 @@
 
 A distributed inference board for frontier-scale Mixture-of-Experts models.
 
-**Design stage.** No number in this document is anchored to a measurement on real silicon. Figures derive from vendor datasheets, published model configs, and arithmetic. Several have been revised more than once.
+**Design stage.** No number in this document is anchored to a measurement on real silicon. Figures derive from vendor datasheets, a published LGA pinout, model configuration files, and arithmetic. Several have been revised more than once.
 
 ---
 
@@ -14,7 +14,7 @@ GLM-5.2 has 744B total parameters and activates roughly 40B per token: 8 routed 
 
 A GPU is thousands of multipliers sharing one memory bus. It wins whenever weights can be fed to those multipliers repeatedly from cache. At 2 FLOPs/byte there is nothing to reuse, so the multipliers idle and the bus is the only thing that matters.
 
-This design inverts the ratio: **many modest processors, each with private storage channels.** Aggregate bandwidth scales with node count instead of being fixed at purchase. A GPU's 1.8 TB/s does not grow when you attach more drives; this does.
+This design inverts the ratio: **several modest compute nodes, each with private storage channels.** Aggregate bandwidth scales with node count instead of being fixed at purchase. A GPU's 1.8 TB/s does not grow when you attach more drives; this does.
 
 ### 1.1 The general law
 
@@ -27,65 +27,102 @@ This design inverts the ratio: **many modest processors, each with private stora
 | Heterogeneous multi-model fleet | none | excellent |
 | LLM prefill (long prompts) | heavy across prompt | poor |
 | Diffusion, convolutions | massive spatial reuse | poor |
-| Video DiT | reuse + quadratic attention | hopeless |
-| Training | n/a (INT8 NPU, no backward pass) | impossible |
+| Video DiT | reuse plus quadratic attention | hopeless |
+| Training | not viable, see section 8 | impossible |
 
 Every fit and every disqualification below follows from that line.
 
 ### 1.2 Where this loses
 
-Stated up front so the document isn't self-flattering:
+Stated up front so the document is not self-flattering:
 
-- **Anything that fits in VRAM.** A single RTX 5090 running a 32B model at Q4 does perhaps 1,000–2,000 tok/s aggregate. Twelve boards do far less, for more money, in a system with vastly more parts.
-- **Edge inference.** A Jetson Orin Nano is $249, draws 15 W, and works out of the box.
+- **Anything that fits in VRAM.** A single RTX 5090 running a 32B model at Q4 does perhaps 1,000 to 2,000 tok/s aggregate. Four nodes do a fraction of that, for more money.
+- **Edge inference.** A Jetson Orin Nano is \$249, draws 15 W, and works out of the box.
 - **Latency.** The architecture trades latency for throughput at every level.
-- **Software maturity.** Everything here needs a runtime that does not exist yet.
+- **Software maturity.** The distributed runtime does not exist yet.
 
 The niche is narrow and real: **models whose weights are enormous but whose active compute per token is small.** That is precisely what MoE is, and precisely where the open-weight frontier went.
 
 ---
 
-## 2. The node: Octavo OSD32MP2
+## 2. The node: RK3588 LGA module
 
-Selected after evaluating and rejecting roughly nineteen alternatives; see [chip-selection.md](chip-selection.md) for the trail and the reasoning behind each rejection.
+Selected after evaluating and rejecting roughly twenty alternatives. See [chip-selection.md](chip-selection.md) for the trail, including the STM32MP257 SiP design this replaced and why.
 
-A System-in-Package integrating STMicroelectronics' STM32MP257, DDR4, an STPMIC2 power management IC, EEPROM, oscillators and passives into a single 21×21 mm BGA.
+**Banana Pi BPI-LM7** or **ArmSoM LM7**, two vendors shipping the same 506-pin LGA pinout around Rockchip's RK3588.
 
 | Spec | Value |
 |---|---|
-| Package | 21×21 mm, 437 ball, **1.0 mm pitch** |
-| CPU | 2× Cortex-A35 @ 1.5 GHz with NEON, 512 KB L2 |
-| Coprocessor | Cortex-M33 @ 400 MHz |
-| NPU | 1.35 TOPS |
-| GPU | **Vulkan 1.1, OpenCL 1.2, OpenGL ES 3.1** |
-| Memory | DDR4, integrated (**capacity unconfirmed; see §9**) |
-| Storage | **3× SDMMC** (SD/eMMC/SDIO, 8-bit), 2× Octal SPI, 8× SPI |
-| Networking | **3× Gigabit Ethernet with 2+1 integrated switch**, TSN, IEEE 1588v2 |
-| PCIe | 1× Gen2, embedded 5 Gbit/s PHY |
-| USB | 1× 2.0 HS host, 1× 2.0/3.0 DRD (5 Gbit/s PHY **shared with PCIe**) |
-| Video | 1080p60 H.264 encode/decode |
-| Temperature | −40 to +85 °C case |
+| Package | 45 x 50 x 4.5 mm, **LGA 506-pin, solder-down** |
+| CPU | 4x Cortex-A76 @ 2.4 GHz + 4x Cortex-A55 @ 1.8 GHz, **Armv8.2 with SDOT** |
+| GPU | Mali-G610 MP4, OpenGL ES 3.2 / OpenCL 2.2 / Vulkan 1.1 |
+| NPU | 6 TOPS INT8, INT4/INT8/INT16 mixed |
+| Memory | **8 GB LPDDR4x default, 64-bit** (4/8/16/32 GB options) |
+| Onboard storage | 32 GB eMMC (OS lives here) |
+| **PCIe** | **3.0 x4, plus 2x PCIe 2.0 x1 usable** (confirmed from pinout) |
+| Power | **VCC4V0\_SYS, 4.0 V +/- 5%**, 5 pins |
+| Temperature | 0 to 70 C commercial |
+| Price | ~\$268 USD (8 GB + 32 GB), 20 in stock at time of writing |
 
-**Why this rather than the bare STM32MP257 at a third the price:** the 1.0 mm pitch makes a 4-layer board routable and hand-assemblable, the integrated DDR4 removes nine fly-by memory routes, and the integrated PMIC removes a 24-rail power distribution problem. Those three risks dominate a first BGA project. The bare chip is a version-two option and the software carries over unchanged.
+### 2.1 The PCIe breakout, confirmed
 
-**Why the GPU matters more than the NPU:** Vulkan 1.1 means llama.cpp's Vulkan backend has a real chance of running. That reduces the software task from *write a distributed MoE runtime from scratch against an undocumented accelerator* to *port an existing engine and add multi-node RPC*. This was the single largest risk reduction in the entire chip evaluation.
+The published pin function list resolves the question that decides the whole design. High-speed differential pairs on the LGA:
+
+| Port | Lanes | Notes |
+|---|---|---|
+| PCIE30\_PORT0 | 2 (TX0/1, RX0/1) | lanes 0 and 1 |
+| PCIE30\_PORT1 | 2 (TX0/1, RX0/1) | mapped as lanes 2 and 3 on the reference mainboard |
+| PCIE20\_0 | 1 | also usable as SATA 3.0 |
+| PCIE20\_1 | 1 | also usable as SATA 3.0 |
+| PCIE20\_2 | 1 | **shared with USB 3.0 SuperSpeed** |
+
+PORT0 and PORT1 combine to give **the full PCIe 3.0 x4**. All bifurcation control pins are broken out (`PCIE30X4_PERSTN`, `CLKREQN`, `WAKEN`, plus X2 and X1 variants), so 1x4, 2x2 and 4x1 modes are all reachable.
+
+This matters because CM4-form-factor RK3588 modules, such as the Radxa CM5, only expose PCIe x1 through the connector. That would cap a node at roughly 400 MB/s and eliminate the reason to use this chip.
+
+### 2.2 Why a module rather than a bare chip
+
+The general rule from [chip-selection.md](chip-selection.md) is that **a system-on-module is a category error when its price buys packaging rather than capability.** A \$250 module carrying 2 GB and one eMMC channel fails that test. This one carries 8 to 32 GB of 64-bit LPDDR4x, a PCIe 3.0 x4 link, and SDOT-capable cores.
+
+What the module price buys here:
+
+- **A 12-layer PCB doing the LPDDR4x routing.** Getting a 64-bit memory interface wrong on a custom board means the PHY training sequence falls back to a lower rate or narrower bus, halving bandwidth, and you discover it after fabrication.
+- **LGA rather than BGA.** Solder-down, no balls to collapse, visually inspectable, and far more forgiving than a fine-pitch BGA on a first design.
+- **Published reference designs.** Schematics, PCB pads, 2D drawings and SMD files for the vendor's own carrier board are public, so the carrier is an adaptation rather than a clean sheet.
+- **Two vendors, one pinout.** Second-sourcing is possible, which matters for a design intended to outlive one supplier.
+
+### 2.3 The compute constraint has gone away
+
+The previous design was built on dual Cortex-A35 cores, which are Armv8.0-A and lack the `SDOT` dot-product instruction. llama.cpp's fast quantized NEON kernels gate on `FEAT_DotProd` and fall back to widening multiply-accumulate without it, roughly halving throughput.
+
+The A76 is Armv8.2-A with native `SDOT`. Four of them at 2.4 GHz deliver well over 50 GOPS on quantized GEMM, against roughly **14 GFLOPS needed** to consume 4 GB/s of streamed Q4 weights.
+
+**Compute is no longer near the constraint.** The GPU and NPU become optional optimisation rather than blocking questions, which removes the largest software risk in the previous design.
 
 ---
 
 ## 3. Interconnect
 
-Each node has three Gigabit Ethernet interfaces with an integrated 2+1 switch. Nodes chain **MAC-to-MAC over RGMII**, direct copper between adjacent nodes, no PHY chips, no magnetics, no external switch IC.
+Nodes connect over **standard Ethernet**. The RK3588 provides GMAC interfaces; the carrier adds PHYs and magnetics, or routes RGMII directly between adjacent nodes.
 
 | Property | Value |
 |---|---|
-| Per-link throughput | ~125 MB/s |
+| Per-link throughput | ~125 MB/s at 1 GbE |
 | Latency | microseconds |
-| Topology | linear chain via integrated switches; third port free for uplink |
-| Signalling | RGMII, 12 signals per direction at 125 MHz |
+| Topology | switched or chained, any-to-any |
 
-One PHY plus magnetics per board handles the outside world. Board-to-board runs as more RGMII over the stacking header, or over ordinary Ethernet cabling if the stack is spread out for thermal reasons.
+### 3.1 Decode is unaffected, prefill is bounded
 
-**Consequence:** a switched fabric gives any-to-any connectivity, so tensor-parallel groups are not constrained by physical adjacency and a single dead node does not partition the network.
+At 6144 hidden dimensions and FP16 activations, a layer boundary moves about 12 KB per token.
+
+| Workload | Per layer | Total | At 125 MB/s |
+|---|---|---|---|
+| Decode, 1 token, 75 layers | 12 KB | ~900 KB | **~7.2 ms**, about 1% of a token |
+| Prefill, 100k tokens | 1.2 GB | ~90 GB | **~12 minutes** |
+
+**Decode does not care about the link. Prefill is bounded by it.** That asymmetry is why long-prompt processing is this design's worst workload, and why the ideal-node specification calls for 10 GbE.
+
+Ethernet-only inter-board data is a hard requirement of the [compatibility contract](compatibility.md), not a convenience.
 
 ---
 
@@ -93,76 +130,96 @@ One PHY plus magnetics per board handles the outside world. Board-to-board runs 
 
 ### 4.1 Form factor
 
-100×100 mm, 4 layers, double-sided assembly. 150×150 mm is under consideration, the PCB is roughly 0.2% of BOM cost, so the larger size buys routing headroom and easier bring-up for about $25.
+**150 x 150 mm, 4 layers.** Modules on the top face, M.2 sockets on the bottom.
+
+Each module is 2,250 mm2. On 19,600 mm2 of usable face, four modules occupy 46% and six occupy 69%. The PCB cost difference against 100 x 100 mm is roughly \$25 on a \$2,400 board, and the space buys routing channels, decoupling placement, thermal spacing and room to bodge a fix during bring-up.
 
 ### 4.2 Population
 
-Nine nodes in a 3×3 grid. Storage on the reverse face.
+| Interface | Attached per node | Throughput |
+|---|---|---|
+| PCIe 3.0 x4 | 1x M.2 2280 NVMe | ~3.2 GB/s |
+| PCIe 2.0 x1 | 1x M.2 2242 NVMe | ~400 MB/s |
+| PCIe 2.0 x1 | 1x M.2 2242 NVMe | ~400 MB/s |
+| **Per node** | **3 drives** | **~4.0 GB/s** |
 
-| Interface | Attached per node | Bandwidth | Capacity |
+The third PCIe 2.0 lane is shared with USB 3.0 SuperSpeed and is reserved for a host or debug link.
+
+| | 4 nodes | 6 nodes |
+|---|---|---|
+| Memory | 32 GB | 48 GB |
+| Storage bandwidth | **~16 GB/s** | **~24 GB/s** |
+| Storage capacity (512 GB drives) | 6 TB | 9 TB |
+| Power (estimated) | ~90 W | ~135 W |
+
+### 4.3 Drives are read-only in practice
+
+The workload loads a model once and then streams weights forever. Weights are never modified. Writes occur only at initial model load, occasional KV paging, and logging.
+
+Consequences for procurement:
+
+- **Buy for read performance.** Sequential and 16 MB-block random read. Write speed is nearly irrelevant.
+- **DRAM cache is not optional.** DRAM-less drives collapse on sustained reads because every access hits the mapping table. This matters more than the sequential figure on the box.
+- **Gen3, not Gen4.** The link is PCIe 3.0. A Gen4 drive negotiates down and you have paid for nothing.
+- **512 GB is the practical minimum.** Below that, fewer NAND dies means less internal parallelism and the drive will not saturate the link. Above it, capacity is cheap headroom.
+- **Endurance is a non-issue.** Consumer TLC is rated around 600 TBW per terabyte, which at near-zero writes outlives the project.
+
+Capacity sizing, model split across nodes:
+
+| Model | Total | Per node, 4 nodes | Per node, 6 nodes |
 |---|---|---|---|
-| SDMMC ×3 | 3× eMMC 32 GB | 840 MB/s | 96 GB |
-| PCIe Gen2 ×1 | 1× BGA NVMe | ~500 MB/s | 256 GB–1 TB |
-| Octal SPI ×2 | 2× Octal NAND 4 Gb | ~400 MB/s | 1 GB |
-| **Per node** | **6 devices** | **~1.74 GB/s** | **~350 GB–1.1 TB** |
+| GLM-5.2 | 419 GB | 105 GB | 70 GB |
+| DeepSeek V4-Pro | 900 GB | 225 GB | 150 GB |
+| Kimi K3 | 1.56 TB | 390 GB | 260 GB |
+| K3 plus a 445 GB local corpus | 2 TB | 500 GB | 334 GB |
 
-Per board: **54 storage devices, ~15.7 GB/s aggregate, ~3.2 TB.**
+### 4.4 The memory ceiling, and why it is no longer binding
 
-The USB 3.0 port is unavailable in this configuration, its 5 Gbit/s PHY is shared with PCIe, and NVMe is the better use. USB 2.0 HS remains for console and debug.
+The node's DRAM is 64-bit LPDDR4x, roughly **34 GB/s theoretical**.
 
-### 4.3 eMMC density is a bandwidth decision, not a capacity one
+Streamed weights cross that bus twice: once when storage DMAs them into DRAM, and again when the compute core reads them out. Constant alternation between DMA writes and CPU reads also incurs turnaround penalties, so real efficiency under this pattern is roughly 62% rather than the 80% a one-directional benchmark shows.
 
-Sequential read by density, eMMC 5.1, 8-bit bus, HS400 mode:
+`34 GB/s x 0.62 / 2 = ~10.5 GB/s of effective streaming per node`
 
-| Density | Sequential read |
-|---|---|
-| ≤16 GB | 160 MB/s |
-| ≥32 GB | 280 MB/s |
+Against 4.0 GB/s of attached storage, that is **2.6x of headroom.** Storage is cleanly the bottleneck, which is the regime the architecture is designed for and the one where adding hardware helps linearly.
 
-Below 32 GB there are not enough NAND dies to interleave and the interface idles. **HS400 support does not deliver HS400 speed on small parts.** 32 GB modules are therefore mandatory, and the resulting capacity over-provisioning (about 2 TB against a 419 GB model) is not waste, it funds parked-session KV, a local corpus, a LoRA library, and a resident draft model.
+*(The previous design was built on a 32-bit LPDDR4 node giving roughly 3.0 GB/s effective, which sat uncomfortably close to its storage. That constraint is gone.)*
 
-### 4.4 Power distribution
+### 4.5 Power distribution
 
-Per-board DC input, **12 V distributed, regulated to 5 V on board.** At 12 V a board's ~65 W is 5.4 A rather than 13 A, which halves conductor cross-section and IR drop.
+The module requires **4.0 V +/- 5% on VCC4V0\_SYS**. All other rails are generated on-module.
 
-Daisy-chaining power through a stack does not work: twelve boards at 5 V would put 156 A through the bottom board's connector, and that board would dissipate everyone else's conduction loss. Per-board input also gives hot-swap, independent fault isolation, and per-board current measurement.
+Distribute **12 V** across the board and step down to 4.0 V per node. At 12 V a 6-node board's ~135 W is 11 A rather than 34 A at 4 V, which keeps conductors and connectors reasonable.
 
-Metal standoffs through the mounting holes tie board grounds together, which RGMII signal integrity wants anyway.
+Per-board DC input, never chained between boards. Metal standoffs tie board grounds together.
 
-### 4.5 Design-for-bring-up
+**The tight tolerance is the design point to get right.** The vendor's reference carrier schematic shows their regulation approach and should be the starting point.
 
-Roughly $45 of parts that either save debugging time or unlock later capability:
+### 4.6 Design-for-bring-up
 
-- **8 M3 mounting holes**, corners plus side midpoints, for stacking geometry and a ground path
-- **PCIe routed to the header** even if unpopulated, free now, impossible later
-- **INA219 per node on I2C**, power consumption is currently unmeasured, and this is how that stops being true
-- **Test points on every rail and RGMII pair**
-- **Boot-select jumper per node**, recover a node without reflowing it
-- **Status LED per node**
-- **Board ID EEPROM**, stack addressing without DIP switches
-- **Fan header and standoff airgap**, 65 W in a stack needs real airflow, not flush stacking
+- **8 M3 mounting holes**, corners and side midpoints, for stacking geometry and a ground path
+- **All three PCIe 2.0 lanes routed** even if not populated. Free now, impossible later
+- **Per-node current sense on I2C**, because power draw is currently an estimate
+- **Test points on every rail and each RGMII pair**
+- **Status LED and boot-select jumper per node**
+- **Board ID EEPROM** for stack addressing
+- **Fan header and standoff airgap.** Four A76 clusters at load need real airflow, and thermal throttling will otherwise corrupt every measurement
 
 ---
 
 ## 5. Dense models
 
-With 2 GB per node, a transformer layer of essentially any dense model fits on a single node. Tensor parallelism therefore becomes a **speed choice rather than a capacity requirement**, the opposite of the situation on smaller-memory parts.
+With 8 GB per node, a transformer layer of any dense model fits on a single node. Tensor parallelism is therefore a **speed choice, not a capacity requirement.**
 
-| Model | Layers | Layer @Q4_K_M | Nodes at TP=1 | Boards |
-|---|---|---|---|---|
-| Qwen2.5-32B | 64 | ~274 MB | 64 | 8 |
-| Llama 3.1-70B | 80 | ~481 MB | 80 | 9 |
-| Llama 3.1-405B | 126 | ~1.47 GB | 126 | 14 |
+Splitting a layer across N nodes divides the per-node weight read by N but costs a ring all-reduce of N-1 hops, four times per layer. On Ethernet at microsecond latency, groups of 4 to 6 remain reasonable, after which sync cost grows faster than the read shrinks.
 
-**The partitioning rule:** TP degree is bounded by all-reduce cost. On RGMII a 3-node group costs roughly 0.2 ms per all-reduce, four times per layer. Past about 4–6 nodes per group, sync overhead outweighs the reduction in per-node weight read. Everything beyond that goes to pipeline depth.
-
-**Single-query** latency is one token walking every stage. **Aggregate** throughput is every stage busy on a different query, a pipeline emitting one token per stage-time, spread across as many conversations as there are stages. The second number is much larger and is not a latency figure.
+**Everything not spent on tensor parallelism goes to pipeline depth**, which buys aggregate throughput across concurrent conversations rather than single-query latency.
 
 ### 5.1 The embedding imbalance
 
-Large-vocabulary models have an embedding table bigger than any transformer layer. Qwen2.5-32B's 152k × 5120 embedding is 778M parameters, and untied means the LM head is another 778M, roughly 875 MB at Q4, against 274 MB for a layer.
+Large-vocabulary models have an embedding table bigger than any transformer layer. Qwen2.5-32B's 152k x 5120 embedding is 778M parameters, and untied means the LM head is another 778M, roughly 875 MB at Q4 against 274 MB for a layer.
 
-In a pipeline the slowest stage sets the rate for all stages. Either give embed and unembed dedicated nodes, or shard the vocabulary dimension. Decide before finalising node count.
+In a pipeline the slowest stage sets the rate for all stages. Either give embed and unembed dedicated nodes, or shard the vocabulary dimension.
 
 ---
 
@@ -174,136 +231,144 @@ Dense: nodes hold *different layers*, weights stay resident, activations move. A
 
 MoE: nodes hold *the same layer*, split by expert, in lockstep. A gang. Weights stream from local storage, activations stay. The same nodes are reused for every layer, per token.
 
-Consequence: dense wants maximum nodes; MoE wants maximum storage bandwidth. In MoE mode this is fundamentally a storage device, not a compute device.
+Consequence: dense wants maximum nodes; MoE wants maximum storage bandwidth. In MoE mode this is fundamentally a storage device.
 
 ### 6.2 Sizing
 
 | Model | Total | Layers | Experts per layer | Layer @Q4 | Total storage |
 |---|---|---|---|---|---|
-| Qwen3.5 | 397B |, |, | ~2.8 GB | ~223 GB |
-| GLM-5.2 | 744B | 78 (75 MoE) | 256 + 1 shared, 8 routed | **5.25 GB** | ~419 GB |
-| DeepSeek V4-Pro | 1.6T |, |, | ~9 GB | ~900 GB |
+| Qwen3.5 | 397B | | | ~2.8 GB | ~223 GB |
+| **GLM-5.2** | **744B** | 78 (75 MoE) | 256 + 1 shared, 8 routed | **5.46 GB** | ~419 GB |
+| DeepSeek V4-Pro | 1.6T | | | ~9 GB | ~900 GB |
 | Kimi K3 | 2.78T | 93 | 896 + 2 shared, 16 routed | **14.83 GB** | ~1.56 TB |
 
-**All four layer sizes fit in one board's 18 GB.** Board count above one buys speed, linearly, not capability.
+**All four layer sizes fit in one 4-node board's 32 GB**, with 17 GB spare even for Kimi K3. Node count above the minimum buys speed, linearly, not capability.
 
-*GLM-5.2's per-expert size is derived from total-minus-overhead rather than read from config.json; the layer figure could move ±20%. Kimi K3's per-expert dimensions are inferred from reported architecture, not from a model card.*
+*GLM-5.2's figures are derived from the published config: hidden\_size 6144, moe\_intermediate\_size 2048, 78 layers with first\_k\_dense\_replace of 3. A SwiGLU expert is 3 x 6144 x 2048 = 37.75M parameters. Cross-check: 75 layers x 257 experts x 37.75M = 727.5B against a 743B model total, leaving a plausible ~16B for attention, embeddings and the MTP head.*
 
-### 6.3 Top-K streaming
+### 6.3 Streaming volume
 
-Only the routed experts move. GLM-5.2 at batch 1 streams 8 of 256 per layer, roughly 12.3 GB per token, against 419 GB of total weights.
+Only routed experts move. GLM-5.2 at batch 1 streams 8 of 256 per layer, roughly **12.7 GB per token** against 419 GB of total weights.
 
-| Model | Bytes per token | 1 board | 2 boards | 4 boards |
-|---|---|---|---|---|
-| GLM-5.2 | 12.3 GB | 0.78 s | 0.39 s | 0.20 s |
-| Kimi K3 | 24.6 GB | 1.57 s | 0.78 s | 0.39 s |
+With the shared expert pinned (section 6.5), that falls to about **11.3 GB**, and hot-expert caching brings it to roughly **10.4 GB**.
 
-Load imbalance across nodes (the slowest node gates the layer) realistically adds 1.5–2×. Expert co-location by measured co-activation frequency reduces it.
+| Model | Effective bytes/token | 4 nodes (16 GB/s) | 6 nodes (24 GB/s) |
+|---|---|---|---|
+| GLM-5.2 | ~10.4 GB | **1.54 tok/s** | **2.31 tok/s** |
+| GLM-5.2 at IQ3\_S | ~7.0 GB | ~2.3 tok/s | ~3.4 tok/s |
+| Kimi K3 | ~21 GB | 0.76 tok/s | 1.14 tok/s |
+
+Load imbalance across nodes, where the slowest node gates the layer, realistically adds 1.5x to 2x. Expert co-location by measured co-activation frequency reduces it.
 
 ### 6.4 Batching inverts
 
 All batch elements must be processed before a layer's weights are discarded, so a step serves every query at once and **step time is the per-user latency.**
 
-Expected distinct experts for batch B across E experts with k routed: `E × (1 − (1 − k/E)^B)`.
+Expected distinct experts for batch B across E experts with k routed: `E x (1 - (1 - k/E)^B)`.
 
-GLM-5.2 on one board:
+GLM-5.2 on a 4-node board:
 
-| Batch | Experts touched | Step time | Throughput per token | **Per-user latency** |
+| Batch | Experts touched | Step time | Throughput/token | **Per-user latency** |
 |---|---|---|---|---|
-| 1 | 8 | 0.78 s | 0.78 s | **0.78 s** |
-| 8 | 57 | 5.6 s | 0.70 s | **5.6 s** |
-| 32 | 163 | 15.9 s | 0.50 s | **15.9 s** |
-| 128 | 252 | 24.6 s | 0.19 s | **24.6 s** |
+| 1 | 8 | 0.65 s | 0.65 s | **0.65 s** |
+| 8 | 57 | 4.6 s | 0.58 s | **4.6 s** |
+| 32 | 163 | 13.2 s | 0.41 s | **13.2 s** |
+| 128 | 252 | 20.4 s | 0.16 s | **20.4 s** |
 
-Throughput improves about 4×. Latency degrades about 31×.
+Throughput improves about 4x. Latency degrades about 31x.
 
 **Batch 1 for conversation. Large batch only for asynchronous, verifier-checked work.**
 
-### 6.5 Replication beats batching
+### 6.5 Speculative decoding does not pay here — measured, closed
 
-When a model is small enough that boards divide into groups, separate instances each run at batch-1 latency:
+**This is the most important correction in the current document set, and it inverts a claim carried through several earlier revisions. It was an open question; it no longer is.**
 
-| Mode | Throughput | Per-user latency |
+For a **dense** model, speculative decoding is close to free: verifying 4 draft tokens costs the same weight reads as verifying 1, so acceptance of 2 or more tokens is a direct multiplier. Reported figures of 1.5x to 2x come from that regime.
+
+For a **streaming MoE**, it is not. Verifying B draft tokens requires loading the *union* of the experts those tokens route to, which follows the same expansion as batching:
+
+| Draft tokens | Distinct experts | Bytes vs 1 token |
 |---|---|---|
-| 1 instance, batch 4 | ~1.6× | ~4× worse |
-| 4 instances, batch 1 | ~4× | **unchanged** |
+| 1 | 8 | 1.0x |
+| 2 | 15.8 | 1.97x |
+| 4 | 30.5 | **3.81x** |
 
-Groups need not run the same model. A heterogeneous fleet (one frontier model for hard reasoning, a mid-size model for bulk work, a small model for routing and classification) is something a GPU structurally cannot do, because a GPU shares weights across *copies* but not across *models*. LoRA multiplexing solves diversity only when everything shares a base.
+At 4 draft tokens with a typical acceptance of around 2.2, you would pay 3.8x the bytes for 2.2x the tokens. **That is a net loss.**
 
-Each group needs its own full weight copy on its own boards.
+The escape hatch was **routing correlation.** Consecutive tokens in similar context might route to substantially overlapping experts, in which case the real union would fall far below the independent-sampling estimate above.
 
-### 6.6 The prefetch problem
+**Measured on OLMoE-1B-7B (16 layers, 64 experts, top-8), 500 tokens, twelve seeds** (4 initial: 42, 42/2500-token, 7, 123; 8-seed follow-up sweep: 1, 2, 3, 99, 256, 777, 1000, 2024, run specifically to check whether seed 123's near-miss was a real tail or noise):
 
-Layer N+1's routing is unknown until layer N's router runs, so streaming and compute serialise. Mitigations in order of value:
+| Draft tokens (B) | Measured bytes multiplier, full 12-seed range | Break-even multiplier* | Verdict |
+|---|---|---|---|
+| 2 | 1.54x–1.86x | 1.25x | **NET LOSS, all 12 seeds** |
+| 4 | 2.20x–2.59x | 1.82x | **NET LOSS, all 12 seeds** |
+| 8 | 3.06x–3.91x | 2.35x | **NET LOSS, all 12 seeds** |
 
-1. **Pin shared experts.** They fire on every token. GLM-5.2 has 1 per layer, Kimi K3 has 2. Never stream them.
-2. **LRU-cache hot experts.** Expert popularity is skewed; holding the top ~15% resident kills a large fraction of loads. GLM-5.2's Quantile Balancing may flatten this distribution, measure rather than assume.
-3. **Speculative prefetch.** Predict layer N+1 routing from layer N's hidden state and eat occasional misses.
+*Assumes dense-model-typical acceptance rates (1.6, 2.2, 3.4 tokens at B=2/4/8) — no draft model was built to measure this MoE's real acceptance rate.
+
+Routing correlation is real — every layer measured below the independent-sampling prediction — but across twelve independent seeds it never once cleared break-even at any tested window size. Seed 123's B=4 multiplier (2.20x, the closest approach to the 1.82x line) was not exceeded on the low side by any of the 8 follow-up seeds: it was the natural tail of a real distribution, not the leading edge of a different regime.
+
+**Disable speculative decoding in the first working runtime.** GLM-5.2 ships an MTP head, so the mechanism costs nothing to leave available for later, but this result closes the question under the stated assumptions. Reproduction script and all 12 seeds' raw output: `speculative_routing_experiment.py` and `seed_*/` in this repository. The only thing that could reopen this is a real draft model's measured acceptance rate substantially above the assumed figures.
+
+### 6.6 Expert caching and the prefetch problem
+
+Layer N+1's routing cannot be known until layer N's router runs, so streaming and compute serialise. Mitigations in order of certainty:
+
+1. **Pin the shared expert.** GLM-5.2 has 1 shared expert per layer firing on every token, so it is 1 of 9 active. Pinning all 75 costs about 1.6 GB of RAM and removes **11% of streamed bytes, with certainty.** Kimi K3 has 2 per layer.
+2. **LRU-cache hot routed experts.** Popularity is skewed, but the arithmetic bounds this: 15% of GLM-5.2's routed experts is 63 GB, against roughly 26 GB free on a 4-node board. Realistically you cache 5 to 6%, worth perhaps another 5 to 10% of loads. **GLM-5.2 uses Quantile Balancing during training, which may deliberately flatten the popularity distribution.** Measure before assuming.
+3. **Speculative prefetch.** Predict layer N+1 routing from layer N's hidden state and eat occasional misses. Standard in the expert-offloading literature.
+
+Combined, pinning plus caching gives roughly **0.80x to 0.85x** on streamed bytes. That is the basis of the 10.4 GB/token figure in 6.3.
 
 ### 6.7 Fault behaviour
 
-Dense degrades gracefully, lose a node, re-shard across survivors, run slower. MoE **fails hard**: below the node count needed to hold a layer, the model does not run at all.
+Dense degrades gracefully: lose a node, re-shard across survivors, run slower. MoE **fails hard** below the node count needed to hold a layer.
 
-Graceful degradation is a software feature, not a free property. It requires failover logic in the runtime.
+Graceful degradation is a software feature, not a free property.
 
 ---
 
 ## 7. Context
 
-KV cache scales with `attention layers × bytes per token per layer × context × batch`. **Total model size does not appear.**
+KV cache scales with `attention layers x bytes per token per layer x context x batch`. **Total model size does not appear.**
 
-KV is layer-local, only the current layer's cache needs to be resident, and it streams alongside the experts. Context is therefore a **bandwidth tax, not a capacity cliff.**
+KV is layer-local, so only the current layer's cache needs to be resident and it streams alongside the experts. Context is a **bandwidth tax, not a capacity cliff.**
 
-GLM-5.2 on one board (5.25 GB layer, 12.75 GB free, MLA with sparse attention):
+GLM-5.2 on a 4-node board (5.46 GB layer, ~26 GB free, MLA with sparse attention):
 
 | Context | Concurrent sessions |
 |---|---|
-| 32k | ~360 |
-| 128k | ~90 |
-| 256k | ~45 |
-| 1M (full) | ~11 |
+| 32k | ~740 |
+| 128k | ~185 |
+| 256k | ~92 |
+| 1M (full) | ~23 |
 
-FP8 KV cache roughly doubles these. Kimi K3 is tighter: a 14.83 GB layer leaves 3.17 GB, giving roughly 22 sessions at 128k.
+Kimi K3 leaves ~17 GB after its layer, giving roughly 120 sessions at 128k. FP8 KV cache roughly doubles both.
 
-**Sparse attention reduces attention compute, not KV storage.** Keys must still be stored, because any of them may later be selected.
-
-### 7.1 Speculative decoding
-
-The only mechanism that improves *single-user* latency rather than serving more users. A small resident draft model proposes several tokens; the large model verifies them in one batched pass, with batch staying 1 from the user's perspective.
-
-GLM-5.2 ships an MTP layer for EAGLE-style speculation, sharing the indexer and KV cache. Expect 1.5–2×.
+**Sparse attention reduces attention compute, not KV storage.** Keys must still be stored because any of them may later be selected.
 
 ---
 
 ## 8. What else the silicon does
 
-Each node carries hardware the LLM path never touches. Nine of each per board:
+Each node carries hardware the LLM path never touches:
 
-- **H.264/H.265 encoders and decoders** at 1080p60, a serious transcoder or NVR
-- **Mali GPU with OpenCL**, general compute beyond the NPU
-- **Cortex-M33 at 400 MHz**, idle during inference. Useful for housekeeping, prefetch scheduling, thermal management, watchdog duty, and hard-real-time supervision that a busy Linux scheduler cannot starve
-- **3× CAN FD**, a multi-drop differential bus usable as an out-of-band control plane independent of RGMII, for health checks and resets when the data network is saturated or a node has hung
-- Camera interfaces, ADCs, crypto acceleration, 27 Ethernet ports, 36 CPU cores
+- **8K H.265/H.264 encode and decode**, plus AV1 decode. A serious transcoder or NVR.
+- **Mali-G610 MP4 with OpenCL 2.2 and Vulkan 1.1.** Unlike the previous design's VeriSilicon GPU, this has a mature open driver in Panfrost/Panthor and a large community running compute workloads on it.
+- **6 TOPS NPU** with RKNN tooling.
+- **4x Cortex-A55** idle during inference, available for housekeeping and prefetch scheduling.
+- 48 MP ISP, camera interfaces, SATA-capable lanes.
 
-### 8.1 Image generation, honest assessment
+### 8.1 Image generation
 
-Compute-bound, not bandwidth-bound. The `FLOPs ≈ 2 × params` heuristic underestimates convolutions by roughly three orders of magnitude, because a 3×3 kernel on a 128×128 feature map applies the same weights 16,384 times.
+Compute-bound, not bandwidth-bound. The `FLOPs = 2 x params` heuristic underestimates convolutions by roughly three orders of magnitude, because a 3x3 kernel on a 128x128 feature map applies the same weights 16,384 times.
 
-| Configuration | Per image |
-|---|---|
-| SDXL 1024², 25 steps + refiner | ~40 s |
-| SDXL + LCM, 4 steps | ~7 s |
-| SD1.5 + LCM, 512², 4 steps | ~1 s |
+The RK3588 is far better at this than the previous node, with a real GPU and a working OpenCL path, but a consumer GPU still beats a full board by a wide margin. Usable for bulk generation with small distilled models; not a reason to build the machine.
 
-A single RTX 3080 Ti beats a full board by 15–40× on quality per second. Usable for bulk generation with small distilled models; not a reason to build the machine.
+### 8.2 Training
 
-### 8.2 Video generation
-
-Modern video DiTs use full 3D spatiotemporal attention, roughly 100k latent tokens attending to each other, quadratically. Days per clip. Out.
-
-SVD-class UNet models (~1.5B, temporal convolution plus frame-axis attention) involve four orders of magnitude less attention and are structurally the same problem as SDXL. Plausible at minutes per clip.
-
-*Wan 2.2's MoE is timestep-switched rather than per-token routed (two weight swaps per video instead of ninety-three per token) which the streaming architecture handles well. It is purely the attention that kills it.*
+The NPU is INT8/INT16 and there is no floating-point backward path worth using. Training memory is 4x model size. Gradient all-reduce over Ethernet is brutal. Not viable, and not a gap that can be engineered around.
 
 ---
 
@@ -311,39 +376,38 @@ SVD-class UNet models (~1.5B, temporal convolution plus frame-axis attention) in
 
 Ordered by how much they gate everything else.
 
-1. **OSD32MP2 DDR4 capacity and unit price.** Every figure here assumes 2 GB per node at roughly $150. **Blocking.**
-2. **Does llama.cpp's Vulkan backend run on Mali-G52?** Decides whether the software task is a port or a rewrite. Resolvable for about $148 with an STM32MP257F-DK. **Blocking.**
-3. **Are the 2× Octal SPI real xSPI flash controllers**, or the 50 Mbit peripheral kind? Decides whether 18 NAND parts belong on the board.
-4. **Do the 3 SDMMC controllers do independent concurrent DMA**, or share an arbiter? If they share, per-node storage bandwidth is 280 MB/s rather than 840.
-5. **Real eMMC read profile at ~16 MB granularity.** The 280 MB/s figure is sequential; expert reads sit between sequential and random.
-6. **Power consumption.** Estimated from product category. Unmeasured.
-7. **Real matmul throughput on transformer shapes.** The 1.35 TOPS figure is a vendor number, not a transformer benchmark.
-8. **RGMII chain stability** across nine nodes under sustained load.
-9. **GLM-5.2 per-expert dimensions**, currently derived rather than read from config.json.
+1. ~~Does speculative decoding pay on a streaming MoE?~~ **Resolved, section 6.5: no, measured net loss across 12 seeds. Disabled.**
+2. **Real NVMe throughput on RK3588** at 16 MB block size, with and without O\_DIRECT. Every timing figure derives from ~3.2 GB/s on the x4 link.
+3. **Expert popularity distribution** for GLM-5.2, given Quantile Balancing. Determines whether caching is worth 5% or 15%.
+4. **Module dimensions confirmed** at 45 x 50 mm, but carrier layout needs the mechanical drawing and LGA land pattern.
+5. **Real power under sustained load.** The ~22 W per node estimate is from product category, not measurement.
+6. **Load imbalance factor** across nodes in gang mode. Estimated at 1.5x to 2x.
+7. **Thermal behaviour** of four A76 clusters on one board under continuous matmul.
+8. **4.0 V regulation** to +/- 5% across a 6-node board under transient load.
 
 ---
 
 ## 10. Build path
 
-**Step 1, about $148.** One STM32MP257F-DK. Resolve unknowns 2, 6, and 7 on target silicon. If Vulkan does not work, this saves the rest of the budget and a year of effort.
+**Step 1, ~\$120.** One RK3588 single-board computer. Orange Pi 5, Rock 5C, NanoPi and similar run \$100 to \$150 and people already publish llama.cpp benchmarks on them. Measure real NVMe throughput, NEON quantized GEMM, power and thermals on the target silicon.
 
-**Step 2, about $150 more.** A second dev board. Two nodes over Ethernet is where the entire distributed runtime gets written and debugged (expert sharding, RGMII transport, streaming scheduler, failover) before spending anything on a PCB. **This is where the year of work lives, and it is hardware-agnostic.**
+**Step 2, \$0.** ~~Run the speculative-decoding experiment against a routing trace.~~ **Done — see section 6.5. Net loss, disabled.**
 
-**Step 3, free.** Schematic and layout in KiCad, with §4.5 designed in from the start.
+**Step 3, ~\$120 more.** A second SBC. Two nodes over Ethernet is where the distributed runtime gets written and debugged: expert sharding, transport, streaming scheduler, weighted distribution, failover. **This is the year of work, and it is hardware-agnostic.**
 
-**Step 4, about $300.** Fab five boards, assemble one partially (3 nodes, 9 eMMC). Validate BGA fanout, RGMII chain, storage array, thermals, power distribution, toolchain.
+**Step 4, free.** Carrier schematic and layout in KiCad, adapting the vendor's published reference design.
 
-**Step 5, about $2,775.** Fully populate one board. This is a complete device on its own: a frontier MoE model plus a local corpus with retrieval, at roughly 65 W, with no network dependency.
+**Step 5, ~\$400.** Fab five carriers, populate one with a single module and one drive. Validate LGA reflow, 4.0 V regulation, PCIe routing, Ethernet, thermals.
 
-**Step 6, incremental.** Everything past step 4 is repetition of a validated design.
+**Step 6, ~\$2,400.** Populate four nodes. This is a complete device: a frontier MoE model plus a local corpus with retrieval, in a box, with no network dependency.
 
 ---
 
 ## 11. Prior art
 
-**[Colibrì](https://github.com/JustVugg/colibri)** (JustVugg, July 2026) is a pure-C inference engine that runs GLM-5.2 on a 25 GB consumer machine by streaming experts from NVMe. It is independent confirmation of this document's premise and the software this hardware would build on.
+**[Colibri](https://github.com/JustVugg/colibri)** (JustVugg, July 2026) is a pure-C inference engine that runs GLM-5.2 on a 25 GB consumer machine by streaming experts from NVMe. It is independent confirmation of this document's premise and the software this hardware would build on.
 
-Its published benchmarks are the best available evidence that storage bandwidth is the binding constraint: **0.05–0.1 tok/s** on a 12-core laptop with one NVMe channel, against **6.84 tok/s** on a 6× RTX 5090 host with full expert residency. Same engine, same model, 57× apart, with the only difference being whether storage sits in the decode path.
+Its published benchmarks are the best available evidence that storage bandwidth is the binding constraint: **0.05 to 0.1 tok/s** on a 12-core laptop with one NVMe channel, against **6.84 tok/s** on a 6x RTX 5090 host with full expert residency. Same engine, same model, 57x apart, with the only difference being whether storage sits in the decode path.
 
 Also relevant: expert offloading in the ML-systems literature (Mixtral-offloading and successors), and Petals for a different approach to distributing large-model inference.
 
@@ -351,6 +415,10 @@ Also relevant: expert offloading in the ML-systems literature (Mixtral-offloadin
 
 ## 12. A note on the numbers
 
-Nearly every figure in this project that mattered was wrong at least once before being corrected against a primary source. An entire interconnect design was invalidated when a datasheet revealed the intended fabric was a master-only flash controller. A per-token figure was wrong by 65×. A storage requirement was wrong by 93×. An image-generation estimate was optimistic by three orders of magnitude.
+Nearly every figure in this project that mattered was wrong at least once before being corrected against a primary source.
+
+An entire interconnect design was invalidated when a datasheet revealed the intended fabric was a master-only flash controller. A per-token figure was wrong by 65x. A storage requirement was wrong by 93x. An image-generation estimate was optimistic by three orders of magnitude. A GPU was assumed to be Arm Mali for two days and turned out to be VeriSilicon. Speculative decoding was credited with a 1.5x to 2x gain that measurement across 12 seeds confirmed to be a net loss on this architecture.
+
+The node itself changed late, from a 32-bit LPDDR4 SiP with six storage interfaces per node to a 64-bit LPDDR4x module with one PCIe 3.0 x4 link, after per-interface throughput caps made the first design's aggregate unreachable.
 
 Read everything here as *best current estimate, several times revised.* Something else will invalidate something else.

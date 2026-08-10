@@ -10,7 +10,7 @@ Design stage. Nothing has been built. No number in this repository is anchored t
 
 Mixture-of-Experts decode at batch 1 is **memory-bandwidth-bound**, not compute-bound. Every weight is read once and discarded. A 744B model activates ~40B parameters per token, so ~95% of the weights sit idle at any step. That means the binding constraint isn't FLOPs, it's how fast you can move expert weights from storage into memory.
 
-A GPU has enormous compute and one memory bus. This design inverts that: **many modest processors, each with its own private storage channels.** Aggregate bandwidth scales with hardware count instead of being fixed at purchase. Nine nodes with 36 storage devices give ~15.7 GB/s on one 100×100 mm board, enough to hold a layer of any current frontier open-weight model.
+A GPU has enormous compute and one memory bus. This design inverts that: **many modest processors, each with its own private storage channels.** Aggregate bandwidth scales with hardware count instead of being fixed at purchase. Four nodes with three drives each give ~16 GB/s on one 150 x 150 mm board, enough to hold a layer of any current frontier open-weight model.
 
 ## The general law
 
@@ -32,15 +32,16 @@ This is not a slow GPU. It's the opposite of a GPU, and MoE decode happens to si
 
 | | |
 |---|---|
-| Nodes | 9 × Octavo OSD32MP2 (STM32MP257 + DDR4 + PMIC in a 21×21 mm SiP) |
-| Package pitch | 1.0 mm, 437 ball, 4-layer routable, hand-solderable |
-| RAM | 18 GB (assuming 2 GB/node, **unconfirmed**) |
-| Storage | 27 × eMMC 32 GB + 9 × BGA NVMe + 18 × Octal NAND |
-| Aggregate bandwidth | ~15.7 GB/s |
-| Interconnect | RGMII MAC-to-MAC chain via each node's 2+1 integrated switch, no PHYs |
-| Board | 100×100 mm (150×150 under consideration for routing headroom) |
-| Power | ~65 W estimated |
-| Cost | ~\$2,775 CAD estimated |
+| Nodes | 4 to 6 x RK3588 LGA module (Banana Pi BPI-LM7 / ArmSoM LM7) |
+| Package | 45 x 50 mm, LGA 506-pin, solder-down |
+| CPU | 4x Cortex-A76 @ 2.4 GHz + 4x A55, Armv8.2 with SDOT |
+| RAM | 8 GB 64-bit LPDDR4x per node (up to 32 GB options) |
+| Storage | 1x NVMe on PCIe 3.0 x4 plus 2x on PCIe 2.0 x1 per node |
+| Aggregate bandwidth | ~16 GB/s at 4 nodes, ~24 GB/s at 6 |
+| Interconnect | Ethernet |
+| Board | 150 x 150 mm, 4 layers |
+| Power | ~90 W at 4 nodes |
+| Cost | ~\$2,400 at 4 nodes |
 
 Every frontier open-weight model's layer fits on one board:
 
@@ -58,13 +59,14 @@ Board count above the minimum buys **speed**, linearly. It does not buy capabili
 - [x] Architecture designed and documented
 - [x] Chip selection (see `docs/chip-selection.md`)
 - [x] Board floorplan and component tally
-- [ ] Octavo pricing and DDR4 capacity options, **blocking**
-- [ ] Verify llama.cpp Vulkan runs on Mali-G52 via STM32MP257F-DK (~\$148), **blocking**
+
+- [x] Speculative decoding measured on OLMoE-1B-7B: **net loss at every tested batch size across 12 seeds, disabled, question closed** (see `docs/architecture.md` §6.5)
+- [ ] Measure real NVMe throughput on an RK3588 SBC (~\$120), **blocking**
 - [ ] Schematic
 - [ ] PCB layout
 - [ ] Distributed runtime
 
-**The two blocking items are the whole project right now.** Nothing downstream is worth doing before they're answered.
+**The remaining blocking item is real NVMe throughput on target silicon.** Nothing downstream is worth doing before it's answered.
 
 ## Prior art and credit
 
@@ -83,6 +85,8 @@ Other relevant prior work: expert offloading in the ML-systems literature (Mixtr
 - `docs/chip-selection.md`, the evaluation trail across ~20 candidate parts
 - `docs/ideal-node.md`, the node specification this architecture is waiting for
 - `docs/compatibility.md`, the cross-generation compatibility contract
+- `docs/test-plan.md`, what to measure on a dev kit before committing to a PCB
+- `docs/software-architecture.md`, the runtime layers and what's genuinely novel versus borrowed
 
 ## Honest limitations
 
@@ -94,7 +98,7 @@ Other relevant prior work: expert offloading in the ML-systems literature (Mixtr
 
 ## Why build it anyway
 
-Because a \$2,000 unified-memory box tops out at 128 GB, and every frontier open model is 400 GB to 1.6 TB. The alternative for running these locally is roughly \$185,000 of GPUs and a three-phase electrical service. This is ~\$2,775 and a wall outlet.
+Because a \$2,000 unified-memory box tops out at 128 GB, and every frontier open model is 400 GB to 1.6 TB. The alternative for running these locally is roughly \$185,000 of GPUs and a three-phase electrical service. This is ~\$2,400 and a wall outlet.
 
 Not faster. Possible where it currently isn't.
 
