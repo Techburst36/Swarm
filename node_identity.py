@@ -545,7 +545,7 @@ class NodeIdentity:
         broadcast_interval: float = DEFAULT_BROADCAST_INTERVAL,
         stale_timeout: float = DEFAULT_STALE_TIMEOUT,
         multicast_group: str | None = None,
-        bind_ip: str = "",
+        bind_ip: str = "0.0.0.0",
         ip: str | None = None,
         hostname: str | None = None,
         node_id: str | None = None,
@@ -608,10 +608,20 @@ class NodeIdentity:
             sock = transport.get_extra_info("socket")
             if sock is not None:
                 try:
+                    # Interface to join/send multicast on. On WSL2 and other
+                    # virtualised network stacks, the default route interface
+                    # does not loop multicast back to local listeners, so allow
+                    # forcing loopback via SWARM_MCAST_IF=127.0.0.1.
+                    mcast_if = os.environ.get("SWARM_MCAST_IF", "0.0.0.0")
                     mreq = socket.inet_aton(self._multicast_group) + socket.inet_aton(
-                        self._bind_ip or "0.0.0.0"
+                        mcast_if
                     )
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                    sock.setsockopt(
+                        socket.IPPROTO_IP,
+                        socket.IP_MULTICAST_IF,
+                        socket.inet_aton(mcast_if),
+                    )
                     sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
                     # Enable loopback so we can hear our own multicast on the
                     # same machine (we filter by node_id, so this is safe).
