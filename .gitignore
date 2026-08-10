@@ -5,3 +5,5 @@ fp-info-cache
 gerbers/
 .DS_Store
 venv/
+__pycache__/
+*:Zone.Identifier
