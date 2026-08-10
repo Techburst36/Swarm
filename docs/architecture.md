@@ -285,6 +285,23 @@ Per-board DC input, never chained between boards. Metal standoffs tie board grou
 - **Board ID EEPROM per blade** for backplane addressing
 - **Fan header and standoff airgap.** Four A76 clusters at load need real airflow, and thermal throttling will otherwise corrupt every measurement
 
+### 4.7 Thermal and enclosure
+
+**Closed, server-rack-style enclosure with one end-mounted fan forcing air across the blade row, not an open frame.** A sealed enclosure is what makes forced airflow actually work — an open frame lets air take the path of least resistance around the blades rather than through the gaps between them, which defeats the point of a fan.
+
+**Rough sizing coincidence, worth naming so it doesn't get mistaken for a real constraint:** a 4-blade stack, at an estimated ~1 to 1.5 slot-pitches (20.32 mm each) per blade once real heatsinks are on, lands somewhere around 80-160 mm. A standard 120 mm fan happens to sit in the middle of that range. This is a convenient starting point, not a derived spec — bracket height (120.02 mm) and slot-stacking height are unrelated dimensions on different axes of the case, and the two both landing near 120 mm is coincidence, not physics.
+
+**Fan spec: static-pressure-optimized, not high-airflow-optimized.** Forcing air through narrow gaps between blades populated with M.2 drives and a module is a higher-resistance path than open-air cooling. A radiator-style static-pressure fan is built for exactly this; a generic case fan will underperform at the same size and speed.
+
+**Two things carried over from real rack-cooling practice, easy to miss until airflow silently fails:**
+
+- **Blanking panels for empty blade slots.** The blade architecture's whole point is swap-on-failure — a pulled blade leaves a gap that becomes the path of least resistance, starving airflow to the blades still installed. Server chassis solve this with filler panels that keep the airflow channel sealed even with a slot empty. This matters more here than in a normal build, not less, given how central hot-swap is to the design.
+- **A defined intake path, not just an exhaust fan.** One fan forcing air through is half the circuit — air needs a deliberate way in, whether that's a push design (fan at intake, vented exhaust elsewhere) or a pull design (fan at exhaust, open intake elsewhere). Either works; leaving it undefined does not.
+
+**One geometric check worth recording:** the PCIe bracket opening at the back of each blade does not double as part of this airflow path. The bracket faces out the rear of a normal case; forced air moving along a fan-driven blade row travels sideways across the stack, a different direction entirely. The enclosure needs its own dedicated intake/exhaust venting, independent of the bracket openings.
+
+**Still open, and genuinely needs real hardware to resolve, not more reasoning:** push vs. pull orientation, real per-blade heatsink selection, and actual thermal performance once RK3588 power-under-load is measured (`test-plan.md` step 5). Everything above is a sound starting topology, not a validated design.
+
 ---
 
 ## 5. Dense models
