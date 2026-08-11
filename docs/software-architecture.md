@@ -4,7 +4,17 @@
 
 The hardware documents describe what the boards are. This describes what has to run on them. Most of the difficulty in this project is here, not in the PCB.
 
-**Nothing in this document is built yet.** It is a map of the work, organized so pieces can be built, tested and reasoned about independently, and so it is clear which parts are genuinely novel versus standard plumbing.
+**Status: layers 3 and 4 are built and tested. Layers 1, 2 and 5 are not.** This document remains the map of the work, organized so pieces can be built, tested and reasoned about independently, and so it is clear which parts are genuinely novel versus standard plumbing.
+
+| Layer | Status |
+|---|---|
+| 1, inference core | not started — needs real silicon to validate NEON kernels |
+| 2, single-node expert streaming | not started — blocked on the storage measurements in `test-plan.md` step 4 |
+| 3, node identity and discovery | **built, 9 tests** (`node_identity.py`) |
+| 4, distributed scheduler | **built, 69 tests** (`rpc.py`, `sharding.py`, `gang_sync.py`, `pipeline.py`, `failover.py`) |
+| 5, interfaces | not started |
+
+Plus `test_integration.py`, which wires layers 3 and 4 together against real sockets and the real `FleetTable`. 87 tests total.
 
 ---
 
@@ -51,7 +61,7 @@ Everything a single node needs to decide what to read and when, before any node 
 What makes a node a citizen of a fleet rather than an isolated machine. This is where the [compatibility contract](compatibility.md) becomes code.
 
 - **Capability descriptor.** What a node reports at boot: memory, measured storage bandwidth (not rated, per the contract), compute, negotiated link speed, supported precisions. Contract section 2.3, restated as a schema.
-- **Node discovery.** How nodes find each other. mDNS/Avahi is the boring standard choice and avoids hand-rolling a discovery protocol.
+- **Node discovery.** How nodes find each other. **Built** — and not with mDNS, which this document originally proposed. `node_identity.py` uses UDP broadcast/multicast carrying a JSON capability descriptor, because the stdlib-only constraint rules out Avahi on a minimal ARM image. That makes discovery a genuinely custom component rather than borrowed plumbing; see section 7. **Known limitation:** local multicast does not loop back on WSL2 in either NAT or mirrored networking mode, so discovery cannot be exercised there. The logic is unit-tested directly against `FleetTable`; the transport gets validated on real hardware at `test-plan.md` step 7.
 - **Health and heartbeat.** Is a node alive, is it lagging behind the fleet, should it be dropped from the current job.
 
 **Language: Python.** No part of this is performance-sensitive. It is bookkeeping and network calls, and the interpreter's overhead is irrelevant next to network latency.
@@ -99,11 +109,13 @@ What a user, another program, or an idle desk actually talks to.
 
 Worth stating plainly, since it shapes where effort should go.
 
-**Borrowed or standard:** layer 1's inference core (Colibri does the hard part), mDNS discovery, an OpenAI-compatible API shape, SQLite for local state. None of this needs inventing.
+**Borrowed or standard:** layer 1's inference core (Colibri does the hard part), an OpenAI-compatible API shape, SQLite for local state. None of this needs inventing.
 
 **Novel, and specific to this project:** the expert cache and prefetch predictor tuned for a storage-bound rather than memory-bound machine, weighted sharding across a genuinely heterogeneous fleet, the MoE gang-mode layer-sync coordinator, and the day/night pool membership logic. These do not have off-the-shelf implementations to adapt, because almost nobody else has built an inference system where the bottleneck is deliberately moved to cheap storage.
 
-**The one-month realistic target**, per the discussion in this conversation, is layers 3 and 4 built and validated against the simulated harness, plus the OLMoE speculative-decoding trace from [test-plan.md](test-plan.md) section 2 resolving whether layer 2's prefetch predictor should include speculative decoding at all. Layer 1's ARM port and any real-hardware validation of layers 2 through 5 wait on owning actual silicon.
+**The one-month target — met.** It was: layers 3 and 4 built and validated against the simulated harness, plus the OLMoE speculative-decoding trace resolving whether layer 2's prefetch predictor should include speculative decoding at all. Both are done, and the speculative-decoding answer was *no* — see [dials.md](dials.md) dial 13. A second experiment settled request batching the same way (dial 3): also not worth building.
+
+Layer 1's ARM port and any real-hardware validation of layers 2 through 5 still wait on owning actual silicon.
 
 ---
 
@@ -121,4 +133,4 @@ Worth stating plainly, since it shapes where effort should go.
 
 ---
 
-*Companion to [architecture.md](architecture.md), [dials.md](dials.md), [compatibility.md](compatibility.md) and [test-plan.md](test-plan.md). Describes work not yet started.*
+*Companion to [architecture.md](architecture.md), [dials.md](dials.md), [compatibility.md](compatibility.md) and [test-plan.md](test-plan.md). Layers 3 and 4 are built; 1, 2 and 5 are not.*

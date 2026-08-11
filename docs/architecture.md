@@ -520,4 +520,6 @@ An entire interconnect design was invalidated when a datasheet revealed the inte
 
 The node itself changed late, from a 32-bit LPDDR4 SiP with six storage interfaces per node to a 64-bit LPDDR4x module with one PCIe 3.0 x4 link, after per-interface throughput caps made the first design's aggregate unreachable.
 
+The software has the same character. Four latent asyncio bugs survived their own passing unit tests and only surfaced under a newer Python or under integration: an orphaned `drain()` coroutine that silently skipped backpressure, a swallowed `CancelledError` that left tasks stuck cancelling forever, a `close()` that awaited itself, and a server shutdown that deadlocked because one flag meant two things. A fifth was subtler: `failover.py` passed thirteen tests against a fake `FleetTable` that fires callbacks the real one does not, so a caller wiring it to the real class would have got a coordinator that silently never resharded. Unit tests did not catch any of these; a newer interpreter and an integration harness did.
+
 Read everything here as *best current estimate, several times revised.* Something else will invalidate something else.

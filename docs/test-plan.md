@@ -2,7 +2,7 @@
 
 ### Validating the architecture on an RK3588 SBC before committing to a PCB
 
-The board design rests on nine unknowns listed in [architecture.md](architecture.md) section 9. Twelve of the fifteen questions worth answering can be resolved with one or two development kits for roughly \$300, on the same silicon the production node uses.
+The board design rests on the eight unknowns listed in [architecture.md](architecture.md) section 9. Most of them can be resolved with one or two development kits for roughly \$250–370, on the same silicon the production node uses. **Two of them — real NVMe throughput and sustained power draw — can be answered by anyone who already owns an RK3588 board, using `swarm_bench.py` in the repository root.**
 
 **This document exists so the work is ready the day hardware arrives**, rather than being planned then.
 
@@ -176,11 +176,11 @@ Confirm the runtime assigns experts proportionally to measured bandwidth rather 
 
 ## 5. What this produces
 
-**If step 2 passes and step 8 tracks theory:** the architecture is validated on real silicon, and the remaining work is a PCB plus a runtime that already has its hard parts proven.
+**If step 4's storage numbers hold and step 9's sharding tracks theory:** the architecture is validated on real silicon, and the remaining work is a PCB plus a runtime whose hard parts are already built and tested.
 
-**If step 5 or 6 comes in far below assumption:** every timing figure in the project needs revision, and it is far better to learn that for \$235 than after a board order.
+**If step 4 or 6 comes in far below assumption:** every timing figure in the project needs revision, and it is far better to learn that for ~\$250 — or for nothing, from a stranger's board — than after a \$2,400 board order.
 
-**If step 2 fails:** the project needs a different chip or a from-scratch inference engine, and \$148 has saved a year.
+**If step 1 shows no SDOT, or step 3's compute lands under the ~14 GFLOPS needed:** the chip choice is wrong and ~\$250 has saved a year. (The old form of this line referred to a Vulkan go/no-go on the superseded OSD32MP2 design; that gate no longer exists.)
 
 Steps 7 through 10 are the beginning of the distributed runtime, which is **hardware-agnostic and the actual long pole.** Whatever silicon a future tier uses, that software carries over unchanged. Two dev kits and an Ethernet cable is the entire development environment for it.
 

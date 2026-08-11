@@ -52,15 +52,17 @@ Superseded the earlier 9x Octavo OSD32MP2 design (~\$2,775, 18 GB RAM, ~11.2 GB/
 - [x] Architecture designed and documented
 - [x] Chip selection (see `docs/chip-selection.md`)
 - [x] Board floorplan and component tally
-
 - [x] Speculative decoding measured on OLMoE-1B-7B: **net loss at every tested batch size across 12 seeds, disabled, question closed** (see `docs/architecture.md` §6.5)
+- [x] Request batching measured: **~1.11× projected on GLM-5.2's expert geometry — batch 1, no scheduler** (see `docs/dials.md` dial 3)
+- [x] **Distributed runtime, layers 3 and 4** — node discovery, RPC transport, bandwidth-weighted sharding, MoE gang-mode barrier, dense pipeline mode, failover resharding. 87 tests including an end-to-end integration harness. Hardware-agnostic; runs today on localhost.
 - [ ] Confirm PCIe 3.0 x4 and real NVMe throughput on RK3588 SBC (~\$120), **blocking**
 - [ ] Power draw under sustained load, **blocking**
+- [ ] Layers 1 and 2 (inference core, expert streaming) — both need real silicon
+- [ ] Layer 5 (API server, job dispatcher)
 - [ ] Schematic
 - [ ] PCB layout
-- [ ] Distributed runtime
 
-**The remaining blocking item is real NVMe throughput on target silicon.** Nothing downstream is worth doing before it's answered.
+**Two blocking items remain, both hardware measurements: real NVMe throughput and sustained power draw on target silicon.** If you own an RK3588 board, `swarm_bench.py` answers both in about fifteen minutes — see `BENCHMARK_README.md`.
 
 ## Prior art and credit
 
@@ -75,12 +77,21 @@ Other relevant prior work: expert offloading in the ML-systems literature (Mixtr
 ## Documents
 
 - `docs/architecture.md`, full architecture, performance math, open unknowns
-- `docs/dials.md`, 15 tunable parameters, what each trades, and which are permanent at fab time
+- `docs/dials.md`, 16 tunable parameters, what each trades, and which are permanent at fab time
 - `docs/chip-selection.md`, the evaluation trail across ~20 candidate parts
 - `docs/ideal-node.md`, the node specification this architecture is waiting for
 - `docs/compatibility.md`, the cross-generation compatibility contract
 - `docs/test-plan.md`, what to measure on a dev kit before committing to a PCB
 - `docs/software-architecture.md`, the runtime layers and what's genuinely novel versus borrowed
+
+## Code
+
+- `node_identity.py`, `rpc.py`, `sharding.py`, `gang_sync.py`, `pipeline.py`, `failover.py` — the distributed runtime (layers 3 and 4), stdlib-only
+- `test_integration.py` — all six wired together, real sockets, real `FleetTable`
+- `swarm_bench.py`, `BENCHMARK_README.md` — the RK3588 benchmark, if you have a board and fifteen minutes
+- `speculative_routing_experiment.py`, `cross_request_routing_experiment.py` — the two routing experiments and their results in `seed_*/`
+
+The runtime modules need only the Python standard library. The experiments need torch, transformers, numpy, matplotlib, and optionally bitsandbytes.
 
 ## Honest limitations
 
