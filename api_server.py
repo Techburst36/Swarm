@@ -26,16 +26,9 @@ Design rules (do not break)
 
 from __future__ import annotations
 
-import contextlib
-if not hasattr(asyncio, "timeout"):
-    @contextlib.asynccontextmanager
-    async def _dummy_timeout(delay):
-        yield
-    asyncio.timeout = _dummy_timeout
-
-
 import argparse
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -43,6 +36,14 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
+
+# Python 3.10 compatibility: asyncio.timeout was added in 3.11.
+# On 3.11+ this is a harmless no-op check.
+if not hasattr(asyncio, "timeout"):
+    @contextlib.asynccontextmanager
+    async def _dummy_timeout(delay):
+        yield
+    asyncio.timeout = _dummy_timeout  # type: ignore[assignment]
 
 from failover import (
     DEFAULT_SETTLE_WINDOW,

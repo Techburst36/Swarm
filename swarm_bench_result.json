@@ -1,0 +1,273 @@
+{
+  "version": "1.0.0",
+  "timestamp_utc": "2026-08-11T11:20:35Z",
+  "platform": {
+    "board_model": "unknown",
+    "kernel": "Linux version 6.6.87.2-microsoft-standard-WSL2 (root@439a258ad544) (gcc (GCC) 11.2.0, GNU ld (GNU Binutils) 2.37) #1 SMP PREEMPT_DYNAMIC Thu Jun  5 18:30:46 UTC 2025",
+    "distro": "Ubuntu 24.04.3 LTS",
+    "arch": "x86_64",
+    "python_version": "3.12.3",
+    "cpu_cores": 4,
+    "soc_model": "Intel(R) Core(TM) Ultra 7 155H",
+    "cpu_features": "",
+    "sdot_present": false,
+    "cpu_freqs_current_khz": {},
+    "cpu_freqs_max_khz": {},
+    "cpu_governor": "unknown",
+    "ram_total_kb": 12250356,
+    "ram_available_kb": 11463260,
+    "nvme_devices": [],
+    "block_devices": [
+      {
+        "name": "sda",
+        "size_gb": 0.4,
+        "type": "0"
+      },
+      {
+        "name": "sdb",
+        "size_gb": 0.2,
+        "type": "0"
+      },
+      {
+        "name": "sdc",
+        "size_gb": 3.2,
+        "type": "0"
+      },
+      {
+        "name": "sdd",
+        "size_gb": 1099.5,
+        "type": "0"
+      },
+      {
+        "name": "sde",
+        "size_gb": 1099.5,
+        "type": "0"
+      },
+      {
+        "name": "sdf",
+        "size_gb": 0.2,
+        "type": "0"
+      }
+    ],
+    "thermal_zones": []
+  },
+  "storage": {
+    "method": "python_preadv",
+    "file_size_gb": 2.0,
+    "cache_dropped": false,
+    "seq_read_buffered_mbps": 976.0,
+    "seq_read_odirect_mbps": 31886.2,
+    "rand_read_buffered_mbps": 1757.2,
+    "rand_read_odirect_mbps": 26883.3,
+    "odirect_seq_improvement_pct": 3167.0,
+    "odirect_rand_improvement_pct": 1429.9,
+    "caveats": [
+      "fio not found; using pure-Python os.preadv fallback. Install fio for more accurate numbers (apt install fio).",
+      "Cache not dropped between runs (need --sudo). Buffered numbers may be inflated by page cache effects.",
+      "Pure-Python fallback used.  fio provides more accurate queue-depth and IOPS numbers.  Install fio for authoritative results (apt install fio).",
+      "IMPLAUSIBLE: seq_read_odirect = 31886 MB/s exceeds any PCIe 4.0 x4 drive (~7900 MB/s). The test file is almost certainly on a RAM-backed or virtualised filesystem, so this measures memory, not storage. Set TMPDIR to a directory on the real NVMe (e.g. TMPDIR=/mnt/nvme/tmp python3 swarm_bench.py) and re-run. DO NOT SUBMIT these storage numbers."
+    ]
+  },
+  "compute": {
+    "duration_s": 20.0,
+    "cpu_freq_peak_khz": {},
+    "cpu_freq_settled_khz": {},
+    "cpu_freq_settled_mean_khz": 0.0,
+    "temp_peak_c": 0.0,
+    "temp_settled_c": 0.0,
+    "throttle_onset_s": null,
+    "caveats": [],
+    "timeline": [
+      {
+        "elapsed_s": 1.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 2.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 3.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 4.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 5.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 6.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 7.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 8.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 9.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 10.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 11.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 12.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 13.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 14.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 15.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 16.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 17.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 18.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      },
+      {
+        "elapsed_s": 19.0,
+        "freq_khz": {
+          "cpu0": null,
+          "cpu1": null,
+          "cpu2": null,
+          "cpu3": null
+        },
+        "temp_c": {}
+      }
+    ]
+  }
+}
