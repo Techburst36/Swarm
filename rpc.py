@@ -422,6 +422,18 @@ class RpcConnection:
         except RuntimeError:
             current = None
 
+        # Per-frame handler tasks spawned by _handler_loop must be cancelled
+        # too.  Cancelling only the loop tasks leaves these pending, which
+        # surfaces as "Task was destroyed but it is pending!" at loop
+        # teardown and means handler cleanup never ran.  Snapshot the set
+        # first: done-callbacks mutate it as tasks finish.
+        for task in list(self._background_tasks):
+            if task.done() or task is current:
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+
         for task in (self._recv_task, self._handler_task):
             if task is None or task.done():
                 continue
@@ -557,11 +569,18 @@ class RpcConnection:
             payload=payload,
         )
         self._writer.write(frame.encode())
-        drain_coro = self._writer.drain()
+        # Do NOT build the drain coroutine before deciding how to await it.
+        # Creating it first leaves a window where it can be orphaned (if
+        # wait_for raises before wrapping it in a task, which 3.12+'s
+        # timeout-based reimplementation makes more likely), producing a
+        # "coroutine 'StreamWriter.drain' was never awaited" RuntimeWarning
+        # and skipping backpressure entirely on that path.  asyncio.timeout()
+        # wraps the await itself, so the coroutine is always consumed.
         if timeout is not None:
-            await asyncio.wait_for(drain_coro, timeout=timeout)
+            async with asyncio.timeout(timeout):
+                await self._writer.drain()
         else:
-            await drain_coro
+            await self._writer.drain()
 
     async def _read_frame(self) -> Frame:
         """Read and validate one frame from the socket.
@@ -632,6 +651,7 @@ class RpcConnection:
 
         Exits on any read error, protocol violation, or GOODBYE.
         """
+        cancelled = False
         try:
             while not self._closing:
                 # --- backpressure: don't read if handler can't keep up ---
@@ -658,11 +678,27 @@ class RpcConnection:
             logger.debug("Protocol error from %s: %s", self.peer_description, e)
             self._recv_error = e
         except asyncio.CancelledError:
-            pass
+            # We were cancelled, which means close() is ALREADY running --
+            # close() is what cancels this task.  Two things matter here:
+            #
+            # 1. Re-raise rather than swallow.  Suppressing CancelledError
+            #    leaves the task stuck in the "cancelling" state forever,
+            #    which surfaces at teardown as "Task was destroyed but it is
+            #    pending!".
+            # 2. Do NOT call close() from the finally in this case.  Any
+            #    await inside a cancelling task re-raises CancelledError
+            #    immediately, so the redundant close() cannot complete and
+            #    the coroutine is torn down mid-await -- the source of
+            #    "RuntimeError: coroutine ignored GeneratorExit".
+            cancelled = True
+            raise
         except Exception:
             logger.exception("Unexpected error in receive loop for %s", self.peer_description)
         finally:
-            await self.close()
+            # Only close on a natural exit (disconnect, protocol error,
+            # GOODBYE).  On cancellation the closer is already doing it.
+            if not cancelled:
+                await self.close()
 
     async def _dispatch(self, frame: Frame) -> bool:
         """Route an incoming frame.
@@ -974,6 +1010,14 @@ class RpcClient:
         self._pool: dict[tuple[str, int], RpcConnection] = {}
         self._pool_lock = asyncio.Lock()
 
+        # Set by close().  Without this, a task still running after close()
+        # can call _get_connection(), which dials a brand-new connection
+        # into the freshly-emptied pool -- one nobody will ever close, whose
+        # receive loop is still blocked on a read at interpreter teardown
+        # ("Task was destroyed but it is pending!").  A closed client must
+        # refuse to reopen.
+        self._closed: bool = False
+
         # Strong references to in-flight cleanup tasks.  asyncio.create_task()
         # only holds a weak reference via the event loop, so without this a
         # task can be garbage-collected before it runs and its exception is
@@ -1046,8 +1090,13 @@ class RpcClient:
         await conn.send_frame(msg_type, payload, timeout=timeout)
 
     async def close(self) -> None:
-        """Close all pooled connections."""
+        """Close all pooled connections.
+
+        After this returns the client is permanently closed: further sends
+        raise rather than silently dialling a new connection.
+        """
         async with self._pool_lock:
+            self._closed = True
             conns = list(self._pool.values())
             self._pool.clear()
 
@@ -1063,6 +1112,11 @@ class RpcClient:
         Uses bounded exponential backoff on initial connection attempts.
         Removes dead connections from the pool automatically.
         """
+        if self._closed:
+            raise RpcError(
+                f"RpcClient is closed; refusing to dial {peer[0]}:{peer[1]}"
+            )
+
         host, port = peer
 
         # Check existing pooled connection.
