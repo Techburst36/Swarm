@@ -863,6 +863,14 @@ class ApiServer:
         model_name = self._instance.model_name
         if streaming and hasattr(result, "__aiter__"):
             return await self._build_streaming_response(result, model_name)
+        elif hasattr(result, "__aiter__"):
+            # Non-streaming async generator: collect all chunks.
+            chunks: list[str] = []
+            async for chunk in result:
+                chunks.append(str(chunk))
+            return _json_response(
+                _build_chat_response("".join(chunks), model_name)
+            )
         elif isinstance(result, str):
             return _json_response(_build_chat_response(result, model_name))
         else:
