@@ -26,6 +26,14 @@ Design rules (do not break)
 
 from __future__ import annotations
 
+import contextlib
+if not hasattr(asyncio, "timeout"):
+    @contextlib.asynccontextmanager
+    async def _dummy_timeout(delay):
+        yield
+    asyncio.timeout = _dummy_timeout
+
+
 import argparse
 import asyncio
 import json

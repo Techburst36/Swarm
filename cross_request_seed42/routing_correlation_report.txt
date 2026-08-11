@@ -1,0 +1,100 @@
+NOTE: routing decisions were traced on an 8-bit-quantized model, not full precision. Router argmax is a discrete choice and mostly insulated from main-model quantization, but this is a real (second-order) deviation from measuring the model as published. Treat results as directional evidence.
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  Cross-Request vs Consecutive Routing Correlation
+──────────────────────────────────────────────────────────────────────────────────────────
+  Prompts: 16, tokens per prompt: 200, min usable: 31
+  Seed: 42
+──────────────────────────────────────────────────────────────────────────────────────────
+
+  ── CROSS-REQUEST (independent prompts) ──
+   Layer  B=2 actual  pred  ratio  B=4 actual  pred  ratio  B=8 actual  pred  ratio
+  ---------------------------------------------------------------------------------
+       0   14.19   15.0  0.946   23.92   26.5  0.903   37.10   42.0  0.883
+       1   14.43   15.0  0.962   24.61   26.5  0.929   38.16   42.0  0.908
+       2   14.51   15.0  0.967   24.83   26.5  0.937   38.36   42.0  0.913
+       3   14.13   15.0  0.942   23.47   26.5  0.886   35.49   42.0  0.845
+       4   14.39   15.0  0.960   24.24   26.5  0.915   36.80   42.0  0.876
+       5   14.13   15.0  0.942   23.49   26.5  0.887   35.56   42.0  0.846
+       6   14.11   15.0  0.940   23.46   26.5  0.886   35.61   42.0  0.848
+       7   14.24   15.0  0.949   23.83   26.5  0.900   36.21   42.0  0.862
+       8   14.36   15.0  0.957   24.27   26.5  0.916   37.27   42.0  0.887
+       9   14.56   15.0  0.971   24.95   26.5  0.942   38.55   42.0  0.918
+      10   14.47   15.0  0.965   24.70   26.5  0.933   38.09   42.0  0.907
+      11   14.59   15.0  0.973   25.16   26.5  0.950   39.18   42.0  0.933
+      12   14.48   15.0  0.965   24.72   26.5  0.933   38.34   42.0  0.913
+      13   14.61   15.0  0.974   25.09   26.5  0.947   38.78   42.0  0.923
+      14   14.65   15.0  0.976   25.39   26.5  0.959   39.81   42.0  0.948
+      15   14.44   15.0  0.963   24.57   26.5  0.928   37.95   42.0  0.903
+  OVERALL   14.39   15.0  0.959   24.42   26.5  0.922   37.58   42.0  0.895
+
+  ── CONSECUTIVE (same stream) ──
+   Layer  B=2 actual  pred  ratio  B=4 actual  pred  ratio  B=8 actual  pred  ratio
+  ---------------------------------------------------------------------------------
+       0   13.26   15.0  0.884   21.77   26.5  0.822   33.41   42.0  0.795
+       1   13.47   15.0  0.898   22.40   26.5  0.846   34.81   42.0  0.829
+       2   12.81   15.0  0.854   20.57   26.5  0.777   31.46   42.0  0.749
+       3   12.54   15.0  0.836   19.82   26.5  0.749   30.02   42.0  0.715
+       4   12.09   15.0  0.806   18.55   26.5  0.700   27.68   42.0  0.659
+       5   11.97   15.0  0.798   18.17   26.5  0.686   26.74   42.0  0.637
+       6   12.01   15.0  0.800   18.37   26.5  0.693   27.02   42.0  0.643
+       7   12.25   15.0  0.817   19.07   26.5  0.720   28.13   42.0  0.670
+       8   12.41   15.0  0.828   19.70   26.5  0.744   29.71   42.0  0.707
+       9   12.96   15.0  0.864   20.94   26.5  0.791   31.72   42.0  0.755
+      10   13.01   15.0  0.867   21.50   26.5  0.812   32.81   42.0  0.781
+      11   12.83   15.0  0.855   20.78   26.5  0.784   31.20   42.0  0.743
+      12   12.89   15.0  0.859   20.69   26.5  0.781   30.87   42.0  0.735
+      13   12.99   15.0  0.866   20.65   26.5  0.780   30.14   42.0  0.717
+      14   12.99   15.0  0.866   20.69   26.5  0.781   30.36   42.0  0.723
+      15   12.60   15.0  0.840   19.67   26.5  0.743   28.71   42.0  0.684
+  OVERALL   12.69   15.0  0.846   20.21   26.5  0.763   30.30   42.0  0.721
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  Side-by-Side Summary
+──────────────────────────────────────────────────────────────────────────────────────────
+  Condition                          B   Actual    Pred   Ratio  Byte Mult
+  ------------------------------------------------------------------------
+  Consecutive (same stream)          2    12.69    15.0   0.846       1.59x
+  Cross-request (independent)        2    14.39    15.0   0.959       1.80x
+  Independent-sampling theory        2        —    15.0   1.000       1.88x
+
+  Consecutive (same stream)          4    20.21    26.5   0.763       2.53x
+  Cross-request (independent)        4    24.42    26.5   0.922       3.05x
+  Independent-sampling theory        4        —    26.5   1.000       3.31x
+
+  Consecutive (same stream)          8    30.30    42.0   0.721       3.79x
+  Cross-request (independent)        8    37.58    42.0   0.895       4.70x
+  Independent-sampling theory        8        —    42.0   1.000       5.25x
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  Batching Verdict
+──────────────────────────────────────────────────────────────────────────────────────────
+  For batching: each request contributes 1 token, so B requests produce B tokens.
+  Benefit = B / cross_request_byte_multiplier.
+
+  B=2: 2 tokens for 1.80x bytes = 1.11x net gain — BATCHING PAYS (1.11x net gain)
+  B=4: 4 tokens for 3.05x bytes = 1.31x net gain — BATCHING PAYS (1.31x net gain)
+  B=8: 8 tokens for 4.70x bytes = 1.70x net gain — BATCHING PAYS (1.70x net gain)
+
+  RECOMMENDATION: Batching pays at B=4. A batch scheduler that groups independent requests is worth building — it improves throughput by 1.31x over batch-1 at the same per-user latency cost as the byte multiplier.
+
+──────────────────────────────────────────────────────────────────────────────────────────
+  Methodological Notes
+──────────────────────────────────────────────────────────────────────────────────────────
+  • Each prompt was generated independently via its own model.generate()
+    call. The model is in eval() mode; no state persists between calls.
+    Each call gets its own seed (base_seed + prompt_index), and hooks
+    are reinstalled fresh per call. Sequential generation does not bias
+    the routing traces — each prompt's tokens are generated from
+    independent model state.
+
+  • Cross-request windows use ALL C(N, B) combinations of prompts
+    exhaustively (N=16, B≤8).  With N=16 and
+    B=4, this is C(16,4)=1820 combinations × 31 positions
+    = 56420 samples per layer.  No sampling — fully
+    deterministic and reproducible under a fixed seed.
+
+  • Consecutive condition is computed from the SAME traces in the
+    SAME run — not quoted from a previous experiment.  Both conditions
+    share identical model state and seeds.
+──────────────────────────────────────────────────────────────────────────────────────────

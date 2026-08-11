@@ -83,12 +83,14 @@ class GGUFTensorLoader:
         return self._reader
 
     def read_tensor_bytes(self, name: str) -> bytes:
-        """Read tensor *name* from the GGUF file into memory.
-
-        Caches the result so repeated calls return the same buffer.
-        """
         if name not in self._cache:
-            self._cache[name] = self._reader.read_tensor_bytes(name)
+            raw = self._reader.read_tensor_bytes(name)
+            info = self._reader.header.tensors[name]
+            # Auto-upcast F16 (ggml_type 1) to F32 so our Python backbone can read it
+            if info.ggml_type == 1:
+                import numpy as np
+                raw = np.frombuffer(raw, dtype=np.float16).astype(np.float32).tobytes()
+            self._cache[name] = raw
         return self._cache[name]
 
     def get_expert_offset(
@@ -243,92 +245,49 @@ class GGUFTensorLoader:
     # ── Config auto-detection ───────────────────────────────────────────
 
     def _detect_config(self) -> ModelConfig:
-        """Infer model dimensions from GGUF metadata and tensor shapes.
-
-        Falls back to OLMoE-1B-7B defaults for any undetected field.
-        """
         cfg = ModelConfig()
 
-        # Try metadata first.
-        meta_block_count = self._reader.get_metadata(
-            "olmo.block_count", None
-        )
+        meta_block_count = self._reader.get_metadata("olmo.block_count")
         if meta_block_count is None:
-            meta_block_count = self._reader.get_metadata("llama.block_count", None)
-
+            meta_block_count = self._reader.get_metadata("llama.block_count")
         if meta_block_count is not None:
             cfg.num_layers = int(meta_block_count)
+        else:
+            max_layer = -1
+            for tname in self._reader.list_tensors():
+                if tname.startswith("blk."):
+                    try:
+                        max_layer = max(max_layer, int(tname.split(".")[1]))
+                    except: pass
+            if max_layer >= 0:
+                cfg.num_layers = max_layer + 1
 
-        # Detect from tensor count: look for blk.0 .. blk.N
-        tensors = self._reader.list_tensors()
-        max_layer = -1
-        for tname in tensors:
-            if tname.startswith("blk."):
-                parts = tname.split(".")
-                try:
-                    layer_idx = int(parts[1])
-                    max_layer = max(max_layer, layer_idx)
-                except (ValueError, IndexError):
-                    continue
-        if max_layer >= 0:
-            cfg.num_layers = max_layer + 1
+        t_header = self._reader.header.tensors
 
-        # Detect hidden_dim from first attention weight.
-        try:
-            _, size, _ = self._reader.get_tensor_offset("blk.0.attn_norm.weight")
-            # RMS norm weight is [hidden_dim] → size = hidden_dim * 4
-            cfg.hidden_dim = size // 4
-        except KeyError:
-            pass
+        if "token_embd.weight" in t_header:
+            dims = t_header["token_embd.weight"].dims
+            cfg.vocab_size = dims[0]
+            if len(dims) > 1:
+                cfg.hidden_dim = dims[1]
 
-        # Detect intermediate_dim from first expert gate weight.
-        try:
-            _, size, _ = self._reader.get_tensor_offset("blk.0.ffn_gate.0.weight")
-            # gate: [intermediate_dim, hidden_dim] → size = intermediate * hidden * 4
+        if "blk.0.ffn_gate.0.weight" in t_header:
+            cfg.intermediate_dim = t_header["blk.0.ffn_gate.0.weight"].dims[0]
+
+        cfg.tied_embeddings = "output.weight" not in t_header
+
+        if "blk.0.attn_q.weight" in t_header:
+            q_rows = t_header["blk.0.attn_q.weight"].dims[0]
             if cfg.hidden_dim > 0:
-                cfg.intermediate_dim = size // (cfg.hidden_dim * 4)
-        except KeyError:
-            pass
+                for possible_hd in (128, 96, 80, 64):
+                    if q_rows % possible_hd == 0 and cfg.hidden_dim % possible_hd == 0:
+                        cfg.head_dim = possible_hd
+                        cfg.num_heads = q_rows // possible_hd
+                        break
 
-        # Detect vocab_size and embedding tie.
-        try:
-            _, size, _ = self._reader.get_tensor_offset("token_embd.weight")
-            # [vocab_size, hidden_dim]
-            if cfg.hidden_dim > 0:
-                cfg.vocab_size = size // (cfg.hidden_dim * 4)
-        except KeyError:
-            pass
-
-        # Check if output.weight exists separately.
-        cfg.tied_embeddings = "output.weight" not in self._reader.header.tensors
-
-        # Detect num_heads from Q weight.
-        try:
-            _, size, _ = self._reader.get_tensor_offset("blk.0.attn_q.weight")
-            # Q: [hidden_dim, hidden_dim] = [num_heads * head_dim, hidden_dim]
-            if cfg.hidden_dim > 0:
-                # The full matrix is hidden_dim x hidden_dim
-                # num_heads = hidden_dim / head_dim (need to know head_dim)
-                # Try common head_dim values: 64, 80, 96, 128
-                total_elements = size // 4
-                hd = total_elements // cfg.hidden_dim  # = hidden_dim
-                if hd == cfg.hidden_dim:  # [hidden_dim, hidden_dim] confirmed
-                    for possible_hd in (128, 96, 80, 64):
-                        if cfg.hidden_dim % possible_hd == 0:
-                            cfg.head_dim = possible_hd
-                            cfg.num_heads = cfg.hidden_dim // possible_hd
-                            break
-        except KeyError:
-            pass
-
-        # Detect KV heads from K weight if it differs.
-        try:
-            _, size, _ = self._reader.get_tensor_offset("blk.0.attn_k.weight")
-            total_elements = size // 4
-            k_rows = total_elements // cfg.hidden_dim
-            cfg.num_kv_heads = k_rows // cfg.head_dim if cfg.head_dim > 0 else cfg.num_heads
-        except KeyError:
-            cfg.num_kv_heads = cfg.num_heads
+        if "blk.0.attn_k.weight" in t_header:
+            k_rows = t_header["blk.0.attn_k.weight"].dims[0]
+            if cfg.head_dim > 0:
+                cfg.num_kv_heads = k_rows // cfg.head_dim
 
         return cfg
 

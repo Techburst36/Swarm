@@ -284,21 +284,21 @@ class GGUFReader:
         length = struct.unpack("<Q", f.read(8))[0]
         return f.read(length).decode("utf-8", errors="replace")
 
-    def _read_value(self, f, value_type: int) -> Any:
+    def _read_value(self, f, value_type: int):
         if value_type == _GGUF_TYPE_STRING:
             return self._read_string(f)
         elif value_type == _GGUF_TYPE_ARRAY:
-            elem_type = struct.unpack("<I", f.read(4))[0]
-            length = struct.unpack("<Q", f.read(8))[0]
+            elem_type = struct.unpack('<I', f.read(4))[0]
+            length = struct.unpack('<Q', f.read(8))[0]
+            if elem_type == _GGUF_TYPE_STRING:
+                return [self._read_string(f) for _ in range(length)]
             reader = _GGUF_VALUE_READERS.get(elem_type)
             if reader is None:
-                f.read(length * 4)  # skip unknown
                 return None
             return [reader(f) for _ in range(length)]
         else:
             reader = _GGUF_VALUE_READERS.get(value_type)
             if reader is None:
-                f.read(4)  # skip unknown 4-byte value
                 return None
             return reader(f)
 
