@@ -131,6 +131,50 @@ DEFAULT_PROMPTS = [
     "and wine. Show the numerical example step by step, explain why both "
     "countries gain from trade even when one is more productive at "
     "everything, and discuss one modern criticism of the model.",
+    # Music theory
+    "Explain why the circle of fifths works the way it does, starting from "
+    "the physics of overtones. Cover why twelve semitones divide the octave, "
+    "what equal temperament sacrifices, and why a perfect fifth sounds "
+    "consonant.",
+
+    # Geology
+    "Describe how a subduction zone produces both volcanoes and deep ocean "
+    "trenches. Cover the density differences between oceanic and continental "
+    "crust, the role of water in lowering the melting point of mantle rock, "
+    "and why the volcanoes appear inland rather than at the trench.",
+
+    # Law
+    "Explain the difference between civil law and common law legal systems. "
+    "Cover the role of judicial precedent, how statutes are interpreted "
+    "differently, and give an example of how the same dispute might be "
+    "resolved differently under each.",
+
+    # Sports / biomechanics
+    "Explain the biomechanics of a baseball pitcher's throwing motion. Cover "
+    "the kinetic chain from the legs through the hips and torso to the arm, "
+    "where the energy actually comes from, and why shoulder and elbow "
+    "injuries are so common.",
+
+    # Cartography
+    "Explain why every flat map of the Earth must distort something. Cover "
+    "Gauss's Theorema Egregium in accessible terms, compare what Mercator "
+    "and Gall-Peters each preserve and sacrifice, and explain why there is "
+    "no single best projection.",
+
+    # Agriculture
+    "Explain crop rotation and why it works. Cover nitrogen fixation by "
+    "legumes, how rotation interrupts pest and pathogen life cycles, and why "
+    "monoculture depletes soil in ways that fertiliser does not fully fix.",
+
+    # Typography
+    "Explain the difference between serif and sans-serif typefaces, why "
+    "serifs existed historically, and how the constraints of low-resolution "
+    "screens changed typeface design. Cover hinting and why it mattered.",
+
+    # Immunology
+    "Explain how vaccines produce immunological memory. Cover the difference "
+    "between B cells and T cells, what an adjuvant does, and why some "
+    "vaccines need boosters while others confer lifelong immunity."
 ]
 
 
@@ -796,6 +840,16 @@ def main():
     else:
         prompts = DEFAULT_PROMPTS
 
+    if args.num_prompts > len(prompts):
+        print(
+            f"WARNING: --num-prompts {args.num_prompts} requested but only "
+            f"{len(prompts)} prompts are available; using {len(prompts)}.\n"
+            f"         This matters: at B=8 with N={len(prompts)} there are "
+            f"only C({len(prompts)},8)={math.comb(len(prompts), 8)} "
+            f"combination(s),\n"
+            f"         so the B=8 row is weakly averaged. Supply more via "
+            f"--prompts-file for a trustworthy B=8 figure."
+        )
     num_prompts = min(args.num_prompts, len(prompts))
     prompts = prompts[:num_prompts]
 
@@ -844,10 +898,15 @@ def main():
 
     if quantized:
         bnb_config = BitsAndBytesConfig(load_in_8bit=True)
+        # device_map={"": 0} pins the whole model to GPU 0.  With "auto",
+        # accelerate reserves headroom and may dispatch some modules to CPU,
+        # which bitsandbytes 8-bit rejects outright ("Some modules are
+        # dispatched on the CPU or the disk").  Pinning gives a clear OOM if
+        # it genuinely does not fit, rather than a confusing config error.
         model = OlmoeForCausalLM.from_pretrained(
             args.model,
             quantization_config=bnb_config,
-            device_map="auto",
+            device_map={"": 0},
             attn_implementation="sdpa",
         )
     else:
