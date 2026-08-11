@@ -222,6 +222,7 @@ def generate_one_prompt(
     max_new_tokens: int,
     temperature: float,
     base_seed: int,
+    force_full_length: bool = False,
 ) -> tuple[list[int], dict[int, np.ndarray]]:
     """Generate tokens for one prompt and capture expert selections.
 
@@ -249,7 +250,8 @@ def generate_one_prompt(
             temperature=temperature,
             top_p=0.95,
             pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id,
+            eos_token_id=None if force_full_length else tokenizer.eos_token_id,
+            min_new_tokens=max_new_tokens if force_full_length else None,
         )
     elapsed = time.time() - t0
 
@@ -310,8 +312,9 @@ def analyze_consecutive(
     expert_counts = np.zeros((NUM_LAYERS, NUM_EXPERTS), dtype=np.int64)
 
     for trace in expert_traces:
-        n_tokens = next(iter(trace.values())).shape[0]
-        usable = min(n_tokens, min_tokens)
+        # Each prompt contributes everything it generated; no global clamp
+        # (see the note in analyze_cross_request).
+        usable = next(iter(trace.values())).shape[0]
 
         for layer_idx in range(NUM_LAYERS):
             t = trace[layer_idx][:usable]  # (usable, top_k)
@@ -405,10 +408,16 @@ def analyze_cross_request(
         for combo in combinations(range(num_prompts), B):
             traces_in_combo = [expert_traces[i] for i in combo]
             # Each trace might have a different length; use the minimum.
+            # Use only what THIS combination actually has, not the global
+            # minimum across all prompts.  Clamping to the global min means a
+            # single short prompt (one that hit EOS early) truncates every
+            # other prompt too -- in one run a 31-token prompt threw away
+            # ~85% of the generated data.  Combinations end up with unequal
+            # sample counts, which is fine: the mean is taken over all
+            # samples, not over per-combination means.
             usable = min(
                 next(iter(t.values())).shape[0] for t in traces_in_combo
             )
-            usable = min(usable, min_tokens)
 
             for pos in range(usable):
                 for layer_idx in range(NUM_LAYERS):
@@ -819,6 +828,14 @@ def main():
         help="Path to a text file with one prompt per line (overrides built-in prompts)"
     )
     parser.add_argument(
+        "--force-full-length", action="store_true",
+        help="Suppress EOS so every prompt generates the full token count. "
+             "Without this, a prompt that reaches a natural conclusion stops "
+             "early and contributes fewer positions. Note the tradeoff: text "
+             "generated past a natural ending can become repetitive, and "
+             "degenerate text may route differently than normal prose."
+    )
+    parser.add_argument(
         "--load-in-8bit", action="store_true",
         help="Load the model in 8-bit via bitsandbytes (halves memory, ~7 GB). "
              "Requires `pip install bitsandbytes accelerate`. "
@@ -944,6 +961,7 @@ def main():
             max_new_tokens=args.tokens_per_prompt,
             temperature=args.temperature,
             base_seed=args.seed,
+            force_full_length=args.force_full_length,
         )
         n = len(gen_ids)
         min_tokens = min(min_tokens, n)
@@ -951,7 +969,17 @@ def main():
         all_expert_traces.append(trace)
         print(f"{n} tokens")
 
+    print("\nPer-prompt generated lengths:")
+    for i, tr in enumerate(all_expert_traces):
+        n = next(iter(tr.values())).shape[0]
+        flag = "  <-- SHORT, hit EOS early" if n < args.tokens_per_prompt else ""
+        print(f"  [{i:>2}] {n:>4} tokens{flag}")
+
     print(f"\nMin tokens across all prompts: {min_tokens}")
+    print(
+        "      (analysis no longer clamps every prompt to this minimum -- each\n"
+        "       prompt and each combination contributes what it actually has)"
+    )
     if min_tokens < 50:
         print(
             f"WARNING: min_tokens is very low ({min_tokens}). Results will "
