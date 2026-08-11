@@ -18,6 +18,24 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+
+# Python 3.10 compatibility shim for asyncio.timeout
+if not hasattr(asyncio, "timeout"):
+    import contextlib
+    class _TimeoutCompat:
+        def __init__(self, delay):
+            self.delay = delay
+        async def __aenter__(self):
+            self._task = asyncio.current_task()
+            self._handle = asyncio.get_running_loop().call_later(self.delay, self._task.cancel)
+            return self
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            self._handle.cancel()
+            if exc_type is asyncio.CancelledError:
+                raise asyncio.TimeoutError()
+            return False
+    asyncio.timeout = _TimeoutCompat
+
 import contextlib
 import json
 import logging
