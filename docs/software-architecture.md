@@ -12,9 +12,10 @@ The hardware documents describe what the boards are. This describes what has to 
 | 2, single-node expert streaming | not started — blocked on the storage measurements in `test-plan.md` step 4 |
 | 3, node identity and discovery | **built, 9 tests** (`node_identity.py`) |
 | 4, distributed scheduler | **built, 69 tests** (`rpc.py`, `sharding.py`, `gang_sync.py`, `pipeline.py`, `failover.py`) |
+| Integration Suite | **built, 9 tests** (`test_integration.py`) |
 | 5, interfaces | not started |
 
-Plus `test_integration.py`, which wires layers 3 and 4 together against real sockets and the real `FleetTable`. 87 tests total.
+Plus `test_integration.py`, which wires layers 3 and 4 together against real sockets and the real `FleetTable`. **87 tests total.**
 
 ---
 
@@ -37,7 +38,7 @@ Each layer depends only on the one below it, and each can be tested in isolation
 The engine that turns a GGUF file into logits. Mostly borrowed, not built.
 
 - **[Colibri](https://github.com/JustVugg/colibri)**, ported from x86 AVX2 to ARM NEON. This is the one place hand-written low-level code is unavoidable, and it is a bounded porting task rather than new design: swapping intrinsics, not inventing an inference engine. See [chip-selection.md](chip-selection.md) and [architecture.md](architecture.md) section 11 for why this is the software this hardware is built to run.
-- **Quantization support.** Q4\_K\_M as the floor. IQ3\_S per [dials.md](dials.md) dial 6 if the accuracy cost proves acceptable.
+- **Quantization support.** Q4_K_M as the floor. IQ3_S per [dials.md](dials.md) dial 6 if the accuracy cost proves acceptable.
 - **GGUF loading adapted to stream**, reading experts from local NVMe on demand rather than holding the full model in RAM. This is the fork point from stock llama.cpp/Colibri: standard engines assume the model fits in memory, and this one cannot assume that by design.
 
 **Language: C.** Performance-critical, and the only layer where that is true for a good reason rather than by default.
@@ -50,7 +51,7 @@ Everything a single node needs to decide what to read and when, before any node 
 
 - **Expert cache manager.** Pins the shared expert per [dials.md](dials.md) dial 14 (certain, ~11% reduction), LRU-caches routed experts within whatever memory remains after the shared ones and the current layer's KV cache.
 - **Prefetch predictor.** Predicts layer N+1's likely experts from layer N's hidden state, issues speculative reads while layer N still computes. Standard technique in the expert-offloading literature.
-- **Storage I/O layer.** O\_DIRECT reads at the block size [test-plan.md](test-plan.md) step 4 determines empirically, bypassing the page cache since weights are read once and never reread.
+- **Storage I/O layer.** O_DIRECT reads at the block size [test-plan.md](test-plan.md) step 4 determines empirically, bypassing the page cache since weights are read once and never reread.
 
 **Language: C, calling into layer 1, or Python with a thin C extension for the I/O path.** Decide after step 4's measurement shows whether Python's overhead is negligible next to storage latency, which it very likely is.
 

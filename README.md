@@ -1,8 +1,8 @@
 # Swarm
 
-**A distributed inference board for frontier-scale MoE models, built from cheap SiP microprocessors.**
+A distributed inference board for frontier-scale Mixture-of-Experts models.
 
-Design stage. Nothing has been built. No number in this repository is anchored to a measurement on real silicon.
+**Design stage.** No number in this document is anchored to a measurement on real silicon. Figures derive from vendor datasheets, a published LGA pinout, model configuration files, and arithmetic. Several have been revised more than once.
 
 ---
 

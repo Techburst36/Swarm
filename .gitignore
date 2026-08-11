@@ -7,3 +7,11 @@ gerbers/
 venv/
 __pycache__/
 *:Zone.Identifier
+.pi
+*.bin
+*.gguf
+*.so
+*.o
+__pycache__/
+*.tmp
+tmp/
