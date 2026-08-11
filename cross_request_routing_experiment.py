@@ -663,15 +663,12 @@ def print_report(
         "  • Cross-request windows use ALL C(N, B) combinations of prompts"
     )
     lines.append(
-        f"    exhaustively (N={num_prompts}, B≤{max(WINDOW_SIZES)}).  With "
-        f"N={num_prompts} and"
-    )
-    lines.append(
-        f"    B=4, this is C({num_prompts},4)={math.comb(num_prompts, 4)} "
-        f"combinations × {min_tokens} positions"
-    )
-    lines.append(
-        f"    = {math.comb(num_prompts, 4) * min_tokens} samples per layer.  "
+        f"    exhaustively (N={num_prompts}, B<={max(WINDOW_SIZES)}). "
+        f"At B=4 that is C({num_prompts},4)={math.comb(num_prompts, 4)} "
+        f"combinations; each contributes as many positions as the "
+        f"shortest prompt in that combination actually generated, so "
+        f"the total sample count varies by combination and is not a "
+        f"single number. Prompts are NOT clamped to the global minimum. "
         "No sampling — fully"
     )
     lines.append(

@@ -12,7 +12,7 @@ Reference document, read the entry you need, not the whole thing. Companion to [
 |---|---|---|---|
 | 1 | Tensor-parallel degree | latency ↔ pipeline depth | software |
 | 2 | Board count above minimum | money ↔ speed | incremental purchase |
-| 3 | Batch size (MoE) | throughput ↔ per-user latency | software, per request |
+| 3 | Batch size (MoE) | throughput ↔ per-user latency; measured ~1.11× on GLM-5.2, not worth a scheduler | software, per request |
 | 4 | Instance count vs instance size | parallelism ↔ context | software |
 | 5 | Context length | sessions ↔ conversation memory | software |
 | 6 | Quantization format | accuracy ↔ bytes moved | software |
@@ -93,6 +93,48 @@ Expected distinct experts for batch B: `E × (1 − (1 − k/E)^B)`.
 Throughput improves ~4×. Latency degrades ~31×.
 
 **Batch 1 for conversation. Large batch only for asynchronous, verifier-checked work.**
+
+### 3.1 The formula above was checked against a real model, and holds
+
+The table rests on one assumption worth testing rather than trusting: that the experts touched by a batch follow the *independent-sampling* prediction. Batch elements from unrelated requests share no context, so in principle they might still route more similarly than chance — which would make batching cheaper than the formula says.
+
+**Measured on OLMoE-1B-7B (64 experts, top-8), 16 independent prompts on deliberately unrelated topics, all C(16,B) combinations, seed 42** (`cross_request_routing_experiment.py`, results in `cross_request_seed42_v2/`):
+
+| Condition | B=2 | B=4 | B=8 |
+|---|---|---|---|
+| Consecutive tokens, same stream | 0.858 | 0.768 | 0.729 |
+| **Cross-request, independent prompts** | **0.975** | **0.947** | **0.911** |
+| Independent-sampling theory | 1.000 | 1.000 | 1.000 |
+
+(ratio of measured expert union to the formula's prediction; 1.000 means the formula is exactly right)
+
+**Cross-request routing sits very close to full independence.** The strong correlation the speculative-decoding experiment found (0.768 at B=4) comes entirely from shared context within one generation — it evaporates when the prompts differ. The formula in the table above is therefore sound for batching across independent requests, and the small residual correlation (0.947 rather than 1.000) only makes batching slightly cheaper than stated, not qualitatively different.
+
+### 3.2 Why the OLMoE gain does not transfer to GLM-5.2
+
+Measured on OLMoE, batching looks worthwhile: 4 tokens for 3.13× the bytes is a **1.28× net gain**. That number does not carry over to the target model, and the reason is the ratio `k/E`.
+
+| Model | Experts (E) | Top-k | k/E | Gain at B=4 | Gain at B=8 |
+|---|---|---|---|---|---|
+| OLMoE-1B-7B (what was measured) | 64 | 8 | 0.125 | **1.28×** | **1.67×** |
+| GLM-5.2 (the actual target) | 256 | 8 | 0.031 | **~1.11×** | **~1.22×** |
+
+With four times the expert pool and the same top-k, collisions between batch elements become rare, the union grows nearly linearly with B, and there is almost nothing left for batching to save. Projecting OLMoE's *measured* correlation onto GLM-5.2's geometry gives roughly **11% at B=4** — for the cost of a queue, a grouping timer, admission control, and multiplied per-user latency.
+
+**This confirms the table at the top of this dial rather than revising it.** Its own figures already show GLM-5.2 batch-8 throughput improving 0.78 → 0.70 s/token, which is 1.11× — matching the projection exactly.
+
+**Caveat, and it is a real one:** GLM-5.2's "256 experts, top-8" is still listed in `architecture.md` section 9 as *derived rather than read from config.json*. This entire conclusion is sensitive to that number. If GLM-5.2 turns out to have a larger k/E than assumed, batching becomes more attractive and this dial should be revisited.
+
+### 3.3 Where batching would actually be worth building
+
+The verdict above is specific to the design target — one user, interactive, one request at a time. Batching is not worthless in general; it is worthless *here*. It becomes worth reconsidering when:
+
+- **Concurrent independent requests genuinely exist.** The day/night pooling and multi-building federation scenarios in `compatibility.md` describe exactly that situation. Gain grows with B: even on GLM-5.2's unfavourable geometry, B=16 reaches ~1.26×.
+- **Latency does not matter.** Batching's real cost is that requests wait to be grouped. For asynchronous or queued work — overnight corpus processing, bulk summarisation — a 200 ms grouping delay costs nothing, and the throughput gain is free. This is the cleanest case for it.
+- **Prefill rather than decode.** Everything measured here is decode. Prefill already processes many tokens per layer and is this architecture's worst workload (`architecture.md` section 1.1). Batching prefill across requests is a different and probably better proposition, and is **unmeasured**.
+- **A model with a larger k/E.** As section 3.2 shows, the whole calculus hinges on it. A future target model with more routed experts relative to its pool would change this answer.
+
+**For the first working runtime: batch 1, no scheduler.** The mechanism is worth remembering, not worth building yet.
 
 ---
 
@@ -347,7 +389,7 @@ Three mitigations, in order of value:
 ## Which dials matter for which goal
 
 **Chat with a large model**
-Batch 1 (#3). Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2). Speculative decoding (#13) is measured off; do not budget for it.
+Batch 1 (#3) — measured, batching buys ~1.11× on GLM-5.2's expert geometry and is not worth a scheduler. Minimum TP (#1). Long context, few sessions (#5). Boards above minimum for speed (#2). Speculative decoding (#13) is measured off; do not budget for it.
 
 **Many parallel coding agents**
 Multiple instances at batch 1 (#4), not one instance at high batch. Large batch acceptable *within* an instance if verifier-checked (#3). Maximum pipeline depth (#1). GLM-5.2 (#15).

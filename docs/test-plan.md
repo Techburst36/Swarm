@@ -30,7 +30,7 @@ What matters for these tests: an **M.2 slot on PCIe 3.0 x4**, at least 8 GB of R
 
 **Does speculative decoding pay on a streaming MoE? Resolved: no.** Measured across 12 seeds on OLMoE-1B-7B, net loss at every tested batch size. See [architecture.md](architecture.md) section 6.5 for the full result. The method below is kept as a record of how it was answered.
 
-Section 6.5 of [architecture.md](architecture.md) argues it may be a net loss, because verifying B draft tokens requires loading the union of the experts those tokens route to. Under independent routing, 4 draft tokens touch 3.81x the experts of 1 token, against an acceptance of perhaps 2.2.
+Section 6.5 of [architecture.md](architecture.md) argues it may be a net loss, because verifying B draft tokens requires loading the union of the experts those tokens route to. Under independent routing on OLMoE (64 experts, top-8), 4 draft tokens touch **3.31x** the experts of 1 token, against an acceptance of perhaps 2.2. (An earlier revision of this document said 3.81x; that was wrong — see the note under the results table.)
 
 **The open question is routing correlation**, and it is measurable on any machine with any MoE model, today, for nothing.
 
@@ -42,9 +42,26 @@ Section 6.5 of [architecture.md](architecture.md) argues it may be a net loss, b
 | Union 30 to 50% below prediction | Marginal, roughly 1.2x. Worth having, not worth optimising for. |
 | Union far below prediction | Speculation pays. Restore the 1.5x to 2x figures. |
 
-**Also worth extracting from the same trace:** the expert popularity distribution, which determines whether LRU caching is worth 5% or 15% (dial 14). GLM-5.2 uses Quantile Balancing during training, which may deliberately flatten it.
+**Also worth extracting from the same trace:** the expert popularity distribution, which determines whether LRU caching is worth 5% or 15% (dial 14). GLM-5.2 uses Quantile Balancing during training, which may deliberately flatten it. **Still open.**
 
-Two experiments, one trace, zero dollars, and they set the performance figures for the entire project.
+### 2.1 Step 0b: does request batching pay? — done
+
+The same machinery answers a second, opposite question. Speculative decoding batches *consecutive tokens from one stream*; request batching groups *one token each from independent requests*. Same union cost, different token yield — B tokens instead of an acceptance rate — so the economics could well come out the other way.
+
+**Method.** `cross_request_routing_experiment.py`: generate from 16 deliberately unrelated prompts, then compute the expert union across all C(16,B) combinations of *different* prompts at the same generation position. The consecutive condition is recomputed in the same run from the same traces, so the two are directly comparable.
+
+**Result (seed 42, 8-bit, results in `cross_request_seed42_v2/`):**
+
+| Condition | B=2 | B=4 | B=8 |
+|---|---|---|---|
+| Consecutive, same stream | 0.858 | 0.768 | 0.729 |
+| Cross-request, independent | **0.975** | **0.947** | **0.911** |
+
+Cross-request routing is close to fully independent — the correlation that killed speculative decoding is a context effect, and it disappears between unrelated prompts. On OLMoE this still yields a 1.28x net gain at B=4, but **that does not transfer to GLM-5.2**, whose 256-expert pool at the same top-8 makes collisions rare: the projected gain there is ~1.11x. See [dials.md](dials.md) dial 3 sections 3.1–3.3 for the full reasoning.
+
+**Verdict: batch 1, no scheduler, for the first runtime.**
+
+Three experiments, one trace, zero dollars, and they set the performance figures for the entire project.
 
 ---
 
@@ -175,8 +192,11 @@ Steps 7 through 10 are the beginning of the distributed runtime, which is **hard
 
 | Step | Measurement | Assumed | Measured | Date |
 |---|---|---|---|---|
-| 0 | **Expert union at 4 draft tokens** | 3.81x independent | 2.20x–2.59x measured, 12 seeds | done |
+| 0 | **Expert union at 4 draft tokens** | 3.31x independent* | 2.20x–2.59x measured, 12 seeds | done |
 | 0 | **Speculative decoding net gain** | unknown, may be < 1 | **net loss confirmed, all seeds, all B** | done |
+| 0 | **Cross-request union ratio, B=4** | unknown | **0.947 of independent** (16 prompts, seed 42) | done |
+| 0 | **Batching net gain, B=4, OLMoE** | unknown | **1.28x measured** | done |
+| 0 | **Batching net gain, B=4, GLM-5.2** | unknown | **~1.11x projected** (k/E differs, see dials §3.2) | projected |
 | 0 | Expert popularity skew, top 5% share | unknown | | |
 | 1 | SDOT present | yes | | |
 | 2 | Sustained CPU frequency under load | 2.4 GHz nominal | | |
@@ -190,6 +210,8 @@ Steps 7 through 10 are the beginning of the distributed runtime, which is **hard
 | 6 | **Measured bytes/token vs theory** | | | |
 | 7 | Inter-node throughput | 125 MB/s | | |
 | 9 | Load imbalance factor | 1.5x to 2x | | |
+
+*The 3.81x figure previously in this row was wrong. For OLMoE (64 experts, top-8) the independent-sampling union at B=4 is 26.5 experts, i.e. **3.31x** the 8 read by a single token. Corrected against the formula `E × (1 − (1 − k/E)^B)` and confirmed empirically: synthetic fully-independent traces reproduce the prediction to within 0.1%.
 
 ---
 
