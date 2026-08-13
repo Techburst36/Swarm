@@ -569,16 +569,20 @@ class RpcConnection:
             payload=payload,
         )
         self._writer.write(frame.encode())
-        # Do NOT build the drain coroutine before deciding how to await it.
-        # Creating it first leaves a window where it can be orphaned (if
-        # wait_for raises before wrapping it in a task, which 3.12+'s
-        # timeout-based reimplementation makes more likely), producing a
-        # "coroutine 'StreamWriter.drain' was never awaited" RuntimeWarning
-        # and skipping backpressure entirely on that path.  asyncio.timeout()
-        # wraps the await itself, so the coroutine is always consumed.
+        # Do NOT build the drain coroutine before deciding how to await it,
+        # and do NOT store it in a variable first. Creating it early leaves a
+        # window where it can be orphaned if wait_for raises before wrapping
+        # it in a task, producing a "coroutine 'StreamWriter.drain' was never
+        # awaited" RuntimeWarning and silently skipping backpressure.
+        #
+        # asyncio.timeout() (the context-manager form) avoids this too, but
+        # it is Python 3.11+ only -- using it broke this module on 3.10,
+        # which real deployment targets still run. wait_for() with the
+        # coroutine created INLINE, as part of the same call expression,
+        # gives the identical safety property (the coroutine is never a
+        # free-standing object that can be dropped) and works on 3.8+.
         if timeout is not None:
-            async with asyncio.timeout(timeout):
-                await self._writer.drain()
+            await asyncio.wait_for(self._writer.drain(), timeout=timeout)
         else:
             await self._writer.drain()
 
