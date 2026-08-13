@@ -44,6 +44,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import multiprocessing
 import mmap
 import os
 import platform as _platform
@@ -71,6 +72,15 @@ def _parse_args() -> argparse.Namespace:
     p.add_argument(
         "--bench-size-gb", type=int, default=8,
         help="Size of test file for storage benchmark in GB (default: 8)"
+    )
+    p.add_argument(
+        "--test-dir", type=str, default=None,
+        help="Directory to create the storage test file in. Defaults to the "
+             "current working directory (per a Reddit suggestion from "
+             "u/12345myluggage) rather than /tmp, since /tmp is a RAM disk "
+             "(tmpfs) on many systems and silently produces meaningless "
+             "storage numbers. An explicit TMPDIR environment variable is "
+             "still respected if --test-dir is not given."
     )
     p.add_argument(
         "--skip-storage", action="store_true",
@@ -480,7 +490,8 @@ def _run_fio_bench(
     args: argparse.Namespace, result: StorageBenchResult, bench_bytes: int
 ) -> StorageBenchResult:
     """Run fio-based storage benchmarks."""
-    tmpdir = tempfile.mkdtemp(prefix="swarm_bench_")
+    base_dir = args.test_dir or os.environ.get("TMPDIR") or os.getcwd()
+    tmpdir = tempfile.mkdtemp(prefix="swarm_bench_", dir=base_dir)
     result.filesystem = _detect_filesystem(tmpdir)
     ok, free_gb = _check_free_space(tmpdir, args.bench_size_gb)
     if not ok:
@@ -576,7 +587,8 @@ def _run_python_bench(
     args: argparse.Namespace, result: StorageBenchResult, bench_bytes: int
 ) -> StorageBenchResult:
     """Pure-Python storage benchmark using os.preadv with O_DIRECT."""
-    tmpdir = tempfile.mkdtemp(prefix="swarm_bench_")
+    base_dir = args.test_dir or os.environ.get("TMPDIR") or os.getcwd()
+    tmpdir = tempfile.mkdtemp(prefix="swarm_bench_", dir=base_dir)
     result.filesystem = _detect_filesystem(tmpdir)
     ok, free_gb = _check_free_space(tmpdir, args.bench_size_gb)
     if not ok:
@@ -784,12 +796,49 @@ class ComputeBenchResult:
         self.caveats: list[str] = []
 
 
+def _worker_load(stop_flag) -> None:
+    """CPU-bound busy loop for one worker process.
+
+    Runs in its own process (not a thread) so it gets a real core, not a
+    GIL-shared slice of one. Mixed integer and float work, same shape as
+    the original single-threaded version.
+    """
+    a, b, c_ = 123456789, 987654321, 0
+    fa, fb, fc = 3.1415926535, 2.7182818284, 0.0
+    iteration = 0
+    while not stop_flag.value:
+        c_ = (a * b) ^ (c_ + iteration)
+        a = (a + c_) & 0x7FFFFFFFFFFFFFFF
+        b = (b * 1103515245 + 12345) & 0x7FFFFFFFFFFFFFFF
+        fc = math.sin(fa) * math.cos(fb) + fc
+        fa = fa * 1.0001 + 0.0001
+        fb = fb * 0.9999 - 0.0001
+        if abs(fa) > 1e10:
+            fa = 3.1415926535
+        if abs(fb) > 1e10:
+            fb = 2.7182818284
+        iteration += 1
+        if iteration % 200000 == 0:
+            # Cheap opportunity to notice the stop flag promptly.
+            pass
+
+
 def _run_compute_bench(args: argparse.Namespace, platform_info: dict) -> ComputeBenchResult:
     """Run a sustained compute workload, sampling frequency and temperature.
 
-    The workload is a mix of integer multiply-add and float operations
-    running in a tight loop.  It's designed to keep all cores busy without
-    being trivially optimizable.
+    Loads ALL cores simultaneously via multiprocessing, not a single Python
+    thread. A single-threaded workload only keeps one core busy at a time
+    (the OS migrates that one hot thread around, or parks idle cores at low
+    frequency via the governor) -- which produced a false-positive "throttle"
+    on real hardware: cores that were simply never loaded looked identical to
+    cores that had genuinely throttled, and one noisy sample was enough to
+    declare a throttle event 2 seconds in. See the Reddit thread for the
+    real-world report this was found from.
+
+    A frequency drop must also PERSIST for several consecutive samples before
+    being called a throttle, not fire on a single reading -- thread/process
+    scheduling jitter is normal and is not the same thing as thermal
+    throttling.
     """
     result = ComputeBenchResult()
     result.duration_s = float(args.duration)
@@ -804,74 +853,50 @@ def _run_compute_bench(args: argparse.Namespace, platform_info: dict) -> Compute
         for c in range(cpu_cores)
     ]
 
-    # ── Dummy run to check O_DIRECT viability on this fs ───────────────
-    # Not needed for compute, but we track whether thermal sensors exist
     if not freq_paths:
         result.caveats.append(
             "No cpufreq sysfs entries found; frequency tracking disabled."
         )
 
-    # ── Sampling thread ───────────────────────────────────────────────
-    # We use a simple approach: do work in bursts, sample between bursts.
-    # This keeps the CPU hot while letting us read sysfs periodically.
-
+    n_workers = os.cpu_count() or cpu_cores
     print(f"  Running sustained compute for {args.duration}s "
-          f"({args.duration // 60} min)...",
+          f"({args.duration // 60} min) across {n_workers} worker "
+          f"processes (all cores loaded, not just one thread)...",
           file=sys.stderr, flush=True)
+
+    stop_flag = multiprocessing.Value("b", False)
+    workers = [
+        multiprocessing.Process(target=_worker_load, args=(stop_flag,))
+        for _ in range(n_workers)
+    ]
+    for w in workers:
+        w.daemon = True
+        w.start()
 
     t_start = time.monotonic()
     t_end = t_start + args.duration
-    sample_interval = 1.0  # sample every second
+    sample_interval = 1.0
     next_sample = t_start + sample_interval
-
-    # Workload state — small enough to stay in L1 but complex enough to
-    # not be optimized away entirely.
-    a, b, c = 123456789, 987654321, 0
-    fa, fb, fc = 3.1415926535, 2.7182818284, 0.0
 
     timeline: list[dict] = []
     freq_peaks: dict[str, int] = {}
     temp_peak = 0.0
 
-    # For throttle detection
-    freq_initial: dict[str, int] = {}
-    freq_last_per_core: dict[str, int] = {}
+    # Persistence-based throttle detection: a core must read below 85% of
+    # its own observed peak for THROTTLE_PERSIST_SAMPLES consecutive samples
+    # before it counts. One low sample is noise; several in a row is real.
+    THROTTLE_PERSIST_SAMPLES = 5  # 5 consecutive seconds below threshold
+    below_threshold_streak: dict[str, int] = {}
     throttle_onset: float | None = None
-
-    # Read initial frequencies (idle baseline)
-    for cpu_idx in range(cpu_cores):
-        f = _read_sysfs_int(freq_paths[cpu_idx]) if cpu_idx < len(freq_paths) else None
-        if f is not None:
-            freq_initial[f"cpu{cpu_idx}"] = f
 
     try:
         while time.monotonic() < t_end:
-            # ── Do ~10 ms of work ────────────────────────────────────
-            work_start = time.monotonic()
-            iteration = 0
-            while time.monotonic() - work_start < 0.01:
-                # Integer: multiply-add
-                c = (a * b) ^ (c + iteration)
-                a = (a + c) & 0x7FFFFFFFFFFFFFFF
-                b = (b * 1103515245 + 12345) & 0x7FFFFFFFFFFFFFFF
-                # Float: multiply-add
-                fc = math.sin(fa) * math.cos(fb) + fc
-                fa = fa * 1.0001 + 0.0001
-                fb = fb * 0.9999 - 0.0001
-                # Prevent overflow of fa/fb
-                if abs(fa) > 1e10:
-                    fa = 3.1415926535
-                if abs(fb) > 1e10:
-                    fb = 2.7182818284
-                iteration += 1
-
-            # ── Sample if it's time ──────────────────────────────────
+            time.sleep(0.05)
             now = time.monotonic()
             if now >= next_sample:
                 elapsed = now - t_start
                 sample: dict = {"elapsed_s": round(elapsed, 1)}
 
-                # Frequencies
                 freqs: dict[str, int | None] = {}
                 for cpu_idx in range(cpu_cores):
                     path = freq_paths[cpu_idx] if cpu_idx < len(freq_paths) else ""
@@ -879,18 +904,23 @@ def _run_compute_bench(args: argparse.Namespace, platform_info: dict) -> Compute
                     key = f"cpu{cpu_idx}"
                     freqs[key] = f
                     if f is not None:
-                        # Track peaks
                         if key not in freq_peaks or f > freq_peaks[key]:
                             freq_peaks[key] = f
-                        # Throttle detection: freq drops > 15% from peak
-                        if throttle_onset is None and key in freq_peaks:
-                            peak = freq_peaks[key]
-                            if peak > 0 and f < peak * 0.85:
-                                throttle_onset = elapsed
-                        freq_last_per_core[key] = f
+
+                        peak = freq_peaks[key]
+                        if peak > 0 and f < peak * 0.85:
+                            below_threshold_streak[key] = below_threshold_streak.get(key, 0) + 1
+                        else:
+                            below_threshold_streak[key] = 0
+
+                        if (
+                            throttle_onset is None
+                            and below_threshold_streak[key] >= THROTTLE_PERSIST_SAMPLES
+                        ):
+                            # Onset is when the streak actually started.
+                            throttle_onset = elapsed - (THROTTLE_PERSIST_SAMPLES - 1)
                 sample["freq_khz"] = freqs
 
-                # Temperatures
                 temps: dict[str, float] = {}
                 for tp in thermal_paths:
                     tz_name = Path(tp).parent.name
@@ -907,12 +937,17 @@ def _run_compute_bench(args: argparse.Namespace, platform_info: dict) -> Compute
 
     except KeyboardInterrupt:
         result.caveats.append("Compute benchmark interrupted by user.")
+    finally:
+        stop_flag.value = True
+        for w in workers:
+            w.join(timeout=2.0)
+            if w.is_alive():
+                w.terminate()
 
     result.timeline = timeline
     result.cpu_freq_peak_khz = freq_peaks
     result.temp_peak_c = round(temp_peak, 1)
 
-    # Settled: average of last ~30 seconds
     if timeline:
         settled_samples = [s for s in timeline if s["elapsed_s"] >= result.duration_s - 30]
         if not settled_samples:

@@ -21,6 +21,13 @@ A single Python file, no dependencies. It:
 - **No root needed.** Without root, cache effects may inflate the buffered-read numbers (the O_DIRECT numbers are unaffected). Pass `--sudo` if you want it to drop caches between runs — it won't do anything else.
 - **Standard library only.** No `pip install`, no numpy, no dependencies. Runs on Python 3.8+.
 
+## What changed after the first round of feedback (thank you r/SBCs, r/OrangePi)
+
+Two real bugs were caught by people who actually ran this:
+
+- **The storage test defaulted to `/tmp`**, which is a RAM disk on some systems and silently produced meaningless numbers. `u/12345myluggage` pointed out it should default to wherever you run it from instead. Fixed, it now defaults to your current directory. `TMPDIR` and the new `--test-dir` flag both still work if you want somewhere else.
+- **The 10-minute compute test was single-threaded**, so it only ever loaded one core at a time (the OS just migrated that one busy thread around, or parked idle cores at low frequency). On `u/fortean`'s Rock 5C this reported a "throttle" 2 seconds in that was really just cores that were never loaded, not heat. Fixed, the test now loads every core simultaneously via separate processes, and a frequency drop has to persist for 5 straight seconds before it's called a throttle at all, not fire on one noisy sample.
+
 ## Two things that will waste your time if you miss them
 
 **1. The test file must be on the NVMe you want measured.** By default it
