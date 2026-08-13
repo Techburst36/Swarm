@@ -1,0 +1,78 @@
+Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+
+Loading personal and system profiles took 2018ms.
+(base) PS C:\WINDOWS\system32> cd $env:USERPROFILE\Downloads
+(base) PS C:\Users\Victor\Downloads> mkdir C:\swarm_test
+
+
+    Directory: C:\
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026-08-13   5:42 PM                swarm_test
+
+
+(base) PS C:\Users\Victor\Downloads> mkdir D:\swarm_test
+
+
+    Directory: D:\
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026-08-13   5:42 PM                swarm_test
+
+
+(base) PS C:\Users\Victor\Downloads> python dual_nvme_bandwidth_test.py --path-a C:\swarm_test\node_a.bin --path-b D:\swarm_test\node_b.bin --size-gb 2
+======================================================================
+  Dual-NVMe aggregate bandwidth test
+======================================================================
+  Drive A: C:\swarm_test\node_a.bin  (cap: uncapped Mbps)
+  Drive B: D:\swarm_test\node_b.bin  (cap: uncapped Mbps)
+  Test size per drive: 2.0 GB
+
+  Creating 2.0 GB test file at C:\swarm_test\node_a.bin (one-time cost, real data not zeros)...
+  Done: C:\swarm_test\node_a.bin
+  Creating 2.0 GB test file at D:\swarm_test\node_b.bin (one-time cost, real data not zeros)...
+  Done: D:\swarm_test\node_b.bin
+
+── Phase 1: sequential baseline (one drive at a time) ──
+  Drive A alone: 3158 MB/s (0.68s)
+  Drive B alone: 3082 MB/s (0.70s)
+
+── Phase 2: concurrent (both drives at once, real threads) ──
+  Drive A (concurrent): 3085 MB/s (0.70s)
+  Drive B (concurrent): 3074 MB/s (0.70s)
+  Wall-clock for both: 0.71s
+
+── Verdict ──
+  If serial (no real parallelism):   ~1.38s expected
+  If perfectly parallel:              ~0.70s expected
+  Actually measured:                   0.71s
+  Combined aggregate throughput:       6047 MB/s
+
+  RESULT: Close to perfectly parallel. The two drives really
+  are independent I/O paths -- this is what the whole project's
+  bandwidth-aggregation thesis depends on, confirmed on real
+  hardware, today.
+
+  Honest scope reminder: this measures real NVMe hardware you own,
+  which is informative and real, but is not the RK3588 target
+  platform. It proves the MECHANISM (parallel reads from
+  independent devices genuinely overlap), not the exact numbers
+  the board will see.
+======================================================================
+(base) PS C:\Users\Victor\Downloads> mkdir -p ~/swarm/experiments/dual_nvme
+
+
+    Directory: C:\Users\Victor\swarm\experiments
+
+
+Mode                 LastWriteTime         Length Name
+----                 -------------         ------ ----
+d-----        2026-08-13   5:44 PM                dual_nvme
+
+
+(base) PS C:\Users\Victor\Downloads>
